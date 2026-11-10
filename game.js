@@ -4,6 +4,10 @@ const W = 480, H = 800;
 const FONT = '"Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
 const QB = Phaser.Math.Interpolation.QuadraticBezier;
 const PARAMS = new URLSearchParams(location.search); // ?boss=1 보스 바로, ?god=1 무적 (테스트용)
+// 하단 터치 패드 스타일: ?pad=1~5 (기본 1, 0이면 예전 전체화면 드래그)
+const PAD = Math.min(5, Math.max(0, Number(PARAMS.get('pad') === null ? 1 : PARAMS.get('pad')) || 0));
+const PAD_Y = H - 110, PLAYER_Y = H - 200;
+const PAD_TXT = ['', '← 밀어서 움직여요 →', '← 손가락이 있는 곳으로 가요 →', '← 밀고 있으면 계속 가요 →', '← 살짝만 밀어도 쭉 가요 →', '← 누르고 있으면 가요 →'];
 
 // 난이도: hp=하트 수, bs=적 탄속 배율, fire=적 발사 간격 배율, boss=보스 체력
 const DIFF = {
@@ -18,6 +22,21 @@ const PAL = {
 	g: '#a8ecc8', c: '#fff3b0', r: '#ff6b81', y: '#ffe066', s: '#d9c7ff', x: '#c9c3cc', f: '#ff9a3c'
 };
 const SPR = {
+	finger: { px: 4, rows: [
+		'....oo......',
+		'...owwo.....',
+		'...owwo.....',
+		'...owwo.....',
+		'...owwooo...',
+		'...owwowwoo.',
+		'oo.owwowwowo',
+		'owooowwwwwwo',
+		'.owwwwwwwwwo',
+		'.owwwwwwwwwo',
+		'..owwwwwwwo.',
+		'..owwwwwwwo.',
+		'...owwwwwo..',
+		'...ooooooo..'] },
 	player: { px: 4, rows: [
 		'..o.....o..',
 		'.owo...owo.',
@@ -331,7 +350,7 @@ class Game extends Phaser.Scene {
 		this.items = this.physics.add.group();
 
 		// 플레이어: 판정은 중앙 작은 원(반지름 5)만
-		this.player = this.physics.add.image(W / 2, H - 120, 'player').setDepth(5);
+		this.player = this.physics.add.image(W / 2, PAD ? PLAYER_Y : H - 120, 'player').setDepth(5);
 		this.player.setCircle(5, 17, 17);
 
 		// UI
@@ -354,12 +373,15 @@ class Game extends Phaser.Scene {
 		this.input.addPointer(1); // 한 손가락으로 이동, 다른 손가락으로 폭탄 버튼
 		this.input.on('pointerdown', (p, over) => {
 			if (over.length || this.over) return; // 버튼 위에서 시작한 터치는 이동으로 쓰지 않는다
+			if (PAD && p.y < PAD_Y) return; // 패드 모드: 아래 패드에서 시작한 터치만 이동
 			this.dragS = { ptr: p, px: p.x, py: p.y, x: this.player.x, y: this.player.y };
+			this.endTut();
 		});
 		this.input.on('pointerup', p => { if (this.dragS && this.dragS.ptr === p) this.dragS = null; });
 		this.input.keyboard.on('keydown-SPACE', () => this.useBomb());
 		this.input.keyboard.on('keydown-B', () => this.useBomb());
 		this.input.keyboard.on('keydown-M', () => SFX.toggle());
+		if (PAD) this.setupPad();
 
 		// 자동 연사
 		this.time.addEvent({ delay: 170, loop: true, callback: () => { if (!this.over) this.fire(); } });
@@ -608,6 +630,78 @@ class Game extends Phaser.Scene {
 		if (win) this.burst(W / 2, 200, 60);
 	}
 
+	// ----- 하단 터치 패드 (좌우 이동 전용) -----
+	setupPad() {
+		const T = [null, [0xffd6e7, 0xff9fb5], [0xd6ecff, 0x9fd8ff], [0xe6dcff, 0xb69cff], [0xd8f5e4, 0x8fdcb0], [0xfff3b0, 0xffd25a]][PAD];
+		const fill = T[0], line = T[1], h = H - PAD_Y - 8;
+		const g = this.add.graphics().setDepth(15);
+		g.fillStyle(fill, 0.6).fillRoundedRect(8, PAD_Y, W - 16, h, 26);
+		g.lineStyle(4, line, 1).strokeRoundedRect(8, PAD_Y, W - 16, h, 26);
+		const cy = PAD_Y + h / 2 + 4;
+		if (PAD <= 3) { // 홈(레일)
+			g.lineStyle(8, line, 0.8).lineBetween(60, cy, W - 60, cy);
+			g.fillStyle(line, 0.8).fillCircle(60, cy, 8).fillCircle(W - 60, cy, 8);
+		}
+		if (PAD === 4) { // 눈금
+			g.lineStyle(3, line, 0.9);
+			for (let x = 40; x <= W - 40; x += 40) g.lineBetween(x, cy - 10, x, cy + 10);
+		}
+		if (PAD === 3) g.lineStyle(4, line, 1).lineBetween(W / 2, cy - 16, W / 2, cy + 16);
+		if (PAD === 5) { // 왼쪽/오른쪽 버튼
+			g.lineStyle(4, line, 0.9).lineBetween(W / 2, PAD_Y + 14, W / 2, H - 22);
+			txt(this, W / 4, cy, '◀', 44, '#7a4b6b').setDepth(16).setAlpha(0.6);
+			txt(this, W * 3 / 4 - 40, cy, '▶', 44, '#7a4b6b').setDepth(16).setAlpha(0.6);
+			this.hl = this.add.graphics().setDepth(15);
+		}
+		if (PAD === 2 || PAD === 3) this.knob = this.add.circle(W / 2, cy, 20, line, 1).setStrokeStyle(4, 0x7a4b6b).setDepth(16);
+		this.padCy = cy;
+
+		// 손가락 안내: 처음엔 좌우로 왔다갔다, 이후엔 터치를 따라다닌다
+		this.finger = this.add.image(W / 2, cy, 'finger').setOrigin(0.4, 0.05).setDepth(22);
+		this.tut = true;
+		this.fingerTween = this.tweens.add({ targets: this.finger, x: { from: 110, to: W - 110 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+		this.tutTxt = [
+			txt(this, W / 2, PAD_Y - 26, PAD_TXT[PAD], 22, '#7a4b6b').setDepth(22),
+			txt(this, W / 2, PAD_Y - 54, '스타일 ' + PAD + '/5  (주소 끝 ?pad=1~5)', 14, '#9a7a8f').setDepth(22)
+		];
+		this.time.delayedCall(8000, () => this.endTut());
+	}
+
+	endTut() {
+		if (!this.tut) return;
+		this.tut = false;
+		this.fingerTween.stop();
+		this.finger.setAlpha(0);
+		this.tutTxt.forEach(t => this.tweens.add({ targets: t, alpha: 0, duration: 300, onComplete: () => t.destroy() }));
+	}
+
+	// 스타일별 이동 방식: 1 밀기(1:1) / 2 손가락 위치로 / 3 밀면 계속 / 4 밀기(1.8배) / 5 좌우 누르기
+	padMove(ds, x) {
+		const px = ds.ptr.x;
+		if (PAD === 1) return x + (ds.x + px - ds.px - x) * 0.4;
+		if (PAD === 2) return x + (px - x) * 0.35;
+		if (PAD === 3) { const d = px - ds.px; return x + (Math.abs(d) < 8 ? 0 : Phaser.Math.Clamp(d / 60, -1, 1) * 8); }
+		if (PAD === 4) return x + (ds.x + (px - ds.px) * 1.8 - x) * 0.4;
+		return x + (px < W / 2 ? -7 : 7);
+	}
+
+	padUpdate() {
+		const ds = this.dragS, down = !!(ds && ds.ptr.isDown);
+		if (!this.tut) {
+			const f = this.finger;
+			if (down) { f.x = Phaser.Math.Clamp(ds.ptr.x, 16, W - 16); f.y = Phaser.Math.Clamp(ds.ptr.y, PAD_Y + 8, H - 40); }
+			f.setAlpha(f.alpha + ((down ? 1 : 0) - f.alpha) * 0.3).setScale(down ? 0.9 : 1);
+		}
+		if (this.knob) {
+			this.knob.x = PAD === 2 ? Phaser.Math.Clamp(this.player.x, 60, W - 60)
+				: W / 2 + (down ? Phaser.Math.Clamp(ds.ptr.x - ds.px, -150, 150) : 0);
+		}
+		if (this.hl) {
+			this.hl.clear().fillStyle(0xffffff, 0.45);
+			if (down) this.hl.fillRoundedRect(ds.ptr.x < W / 2 ? 12 : W / 2 + 2, PAD_Y + 4, W / 2 - 14, H - PAD_Y - 16, 22);
+		}
+	}
+
 	// ----- 매 프레임 -----
 	update(time) {
 		this.cl1.tilePositionY -= 0.6;
@@ -617,15 +711,18 @@ class Game extends Phaser.Scene {
 
 		// 이동: 드래그(상대 이동) 또는 키보드
 		const ds = this.dragS;
-		if (ds && ds.ptr.isDown) {
+		if (PAD && ds && ds.ptr.isDown) {
+			p.x = this.padMove(ds, p.x);
+		} else if (ds && ds.ptr.isDown) {
 			p.x += (ds.x + ds.ptr.x - ds.px - p.x) * 0.4;
 			p.y += (ds.y + ds.ptr.y - ds.py - p.y) * 0.4;
 		} else {
 			const k = this.cur, w = this.wasd;
 			const vx = (k.right.isDown || w.D.isDown ? 1 : 0) - (k.left.isDown || w.A.isDown ? 1 : 0);
 			const vy = (k.down.isDown || w.S.isDown ? 1 : 0) - (k.up.isDown || w.W.isDown ? 1 : 0);
-			p.x += vx * 5; p.y += vy * 5;
+			p.x += vx * 5; if (!PAD) p.y += vy * 5;
 		}
+		if (PAD) { p.y = PLAYER_Y; this.padUpdate(); }
 		p.x = Phaser.Math.Clamp(p.x, 24, W - 24);
 		p.y = Phaser.Math.Clamp(p.y, 90, H - 30);
 		p.setAlpha(time < this.invuln && Math.floor(time / 80) % 2 ? 0.3 : 1);
