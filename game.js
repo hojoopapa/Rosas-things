@@ -7,9 +7,9 @@ const PARAMS = new URLSearchParams(location.search); // ?boss=1 보스 바로, ?
 
 // 난이도: hp=하트 수, bs=적 탄속 배율, fire=적 발사 간격 배율, boss=보스 체력
 const DIFF = {
-	easy:   { label: '쉬움',   hp: 5, bs: 0.75, fire: 1.6, boss: 40 },
-	normal: { label: '보통',   hp: 3, bs: 1.0,  fire: 1.0, boss: 60 },
-	hard:   { label: '어려움', hp: 3, bs: 1.25, fire: 0.7, boss: 80 }
+	easy:   { label: '쉬움',   hp: 5, bs: 0.75, fire: 1.6, boss: 40, bomb: 3 },
+	normal: { label: '보통',   hp: 3, bs: 1.0,  fire: 1.0, boss: 60, bomb: 2 },
+	hard:   { label: '어려움', hp: 3, bs: 1.25, fire: 0.7, boss: 80, bomb: 2 }
 };
 
 // ---------- 도트 스프라이트 정의 ----------
@@ -66,7 +66,17 @@ const SPR = {
 	ebullet: { px: 4, rows: ['.ooo.', 'opppo', 'opwpo', 'opppo', '.ooo.'] },
 	heart: { px: 4, rows: ['.oo.oo.', 'orrorro', 'orrrrro', '.orrro.', '..oro..', '...o...'] },
 	star: { px: 4, rows: ['..o..', '.oyo.', 'oyyyo', '.oyo.', 'o.o.o'] },
-	spark: { px: 3, rows: ['.y.', 'yyy', '.y.'] }
+	spark: { px: 3, rows: ['.y.', 'yyy', '.y.'] },
+	bomb: { px: 4, rows: [
+		'....y....',
+		'....o....',
+		'..ooooo..',
+		'.ossssso.',
+		'osswsssso',
+		'oskssskso',
+		'ossssssso',
+		'.ossssso.',
+		'..ooooo..'] }
 };
 // 색 바꾼 변형 (젤리 3색, 빈 하트)
 const VARIANTS = {
@@ -123,7 +133,7 @@ function button(scene, x, y, w, h, label, color, cb) {
 	const r = scene.add.rectangle(x, y, w, h, color).setStrokeStyle(4, 0x7a4b6b).setInteractive({ useHandCursor: true });
 	const t = txt(scene, x, y, label, 28, '#7a4b6b');
 	r.on('pointerover', () => r.setScale(1.04)).on('pointerout', () => r.setScale(1));
-	r.on('pointerdown', cb);
+	r.on('pointerdown', () => { SFX.click(); cb(); });
 	return [r, t];
 }
 
@@ -133,6 +143,106 @@ function hiScore(v) {
 		if (v > hiScore()) localStorage.setItem('rt_hi', v);
 	} catch (e) { /* 저장 불가 환경은 무시 */ }
 	return 0;
+}
+
+// ---------- 효과음: WebAudio 합성 (파일 없음, 사인/삼각파 위주로 말랑하게) ----------
+const SFX = (() => {
+	let ctx = null, master = null, muted = false;
+	try { muted = localStorage.getItem('rt_mute') === '1'; } catch (e) { /* 무시 */ }
+
+	// 브라우저는 사용자 동작 안에서만 소리를 허용하므로 첫 입력 때 켠다
+	function init() {
+		if (!ctx) {
+			const AC = window.AudioContext || window.webkitAudioContext;
+			if (!AC) return false;
+			ctx = new AC();
+			master = ctx.createGain();
+			master.gain.value = 0.5;
+			master.connect(ctx.destination);
+		}
+		if (ctx.state === 'suspended') ctx.resume();
+		return true;
+	}
+	// 음 하나: freq에서 시작해 slide 배로 미끄러지며 사라진다
+	function tone(freq, dur, o) {
+		if (muted || !init()) return;
+		o = o || {};
+		const t = ctx.currentTime + (o.delay || 0);
+		const osc = ctx.createOscillator(), g = ctx.createGain();
+		osc.type = o.type || 'sine';
+		osc.frequency.setValueAtTime(freq, t);
+		if (o.slide) osc.frequency.exponentialRampToValueAtTime(Math.max(40, freq * o.slide), t + dur);
+		g.gain.setValueAtTime(0.0001, t);
+		g.gain.exponentialRampToValueAtTime(o.vol || 0.2, t + 0.012);
+		g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+		osc.connect(g); g.connect(master);
+		osc.start(t); osc.stop(t + dur + 0.03);
+	}
+	// 음 여러 개를 차례로 (짧은 멜로디)
+	function notes(list, step, dur, o) {
+		list.forEach((f, i) => tone(f, dur, Object.assign({}, o, { delay: ((o && o.delay) || 0) + i * step })));
+	}
+	// 반짝이는 바람소리 (폭탄용)
+	function sweep(dur, vol) {
+		if (muted || !init()) return;
+		const n = Math.floor(ctx.sampleRate * dur), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+		for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+		const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+		src.buffer = buf; f.type = 'bandpass'; f.Q.value = 1.2;
+		f.frequency.setValueAtTime(600, ctx.currentTime);
+		f.frequency.exponentialRampToValueAtTime(5000, ctx.currentTime + dur);
+		g.gain.setValueAtTime(vol, ctx.currentTime);
+		g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+		src.connect(f); f.connect(g); g.connect(master);
+		src.start();
+	}
+	return {
+		init,
+		get muted() { return muted; },
+		toggle() {
+			muted = !muted;
+			try { localStorage.setItem('rt_mute', muted ? '1' : '0'); } catch (e) { /* 무시 */ }
+			if (!muted) tone(880, 0.1, { type: 'triangle', vol: 0.15 });
+		},
+		shoot: () => tone(900 + Math.random() * 120, 0.06, { type: 'triangle', vol: 0.05, slide: 1.4 }), // 뾰옹
+		tick: () => tone(700, 0.04, { vol: 0.07 }),                                                      // 콕
+		pop: big => {                                                                                    // 뽕! (적 처치)
+			tone(480, 0.13, { vol: 0.2, slide: 2.4 });
+			tone(1100, 0.1, { type: 'triangle', vol: 0.1, slide: 0.5, delay: 0.04 });
+			if (big) { notes([523, 659, 784, 1047], 0.09, 0.2, { type: 'triangle', vol: 0.18, delay: 0.1 }); }
+		},
+		hurt: () => {                                                                                    // 뿌잉 (피격)
+			tone(560, 0.32, { type: 'triangle', vol: 0.25, slide: 0.4 });
+			tone(280, 0.32, { vol: 0.15, slide: 0.5 });
+		},
+		item: kind => {                                                                                  // 띠리링 (아이템)
+			if (kind === 'heart') notes([659, 880, 1047], 0.07, 0.14, { type: 'triangle', vol: 0.2 });
+			else if (kind === 'bomb') notes([392, 523, 392, 659], 0.07, 0.14, { type: 'triangle', vol: 0.2 });
+			else notes([784, 988, 1319], 0.06, 0.12, { type: 'triangle', vol: 0.2 });
+		},
+		bomb: () => {                                                                                    // 반짝반짝 쾅
+			notes([523, 659, 784, 1047, 1319, 1568], 0.045, 0.18, { vol: 0.2 });
+			tone(150, 0.4, { vol: 0.28, slide: 0.4, delay: 0.1 });
+			sweep(0.55, 0.18);
+		},
+		empty: () => tone(220, 0.1, { type: 'triangle', vol: 0.12, slide: 0.7 }),                       // 폭탄 없음
+		wave: () => notes([880, 1175], 0.09, 0.12, { type: 'triangle', vol: 0.12 }),
+		bossIn: () => notes([392, 330, 262], 0.16, 0.25, { type: 'triangle', vol: 0.22 }),
+		clear: () => notes([523, 659, 784, 1047, 784, 1047, 1319], 0.12, 0.22, { type: 'triangle', vol: 0.22 }),
+		over: () => notes([523, 440, 349, 262], 0.18, 0.3, { vol: 0.2, slide: 0.9 }),
+		click: () => notes([660, 880], 0.05, 0.08, { type: 'triangle', vol: 0.15 })
+	};
+})();
+['pointerdown', 'touchend', 'keydown', 'click'].forEach(ev => document.addEventListener(ev, () => SFX.init(), { passive: true }));
+
+// 소리 켜기/끄기 버튼 (♪)
+function soundBtn(scene, x, y) {
+	const t = txt(scene, x, y, '♪', 30).setInteractive({ useHandCursor: true });
+	t.on('pointerdown', () => SFX.toggle());
+	const f = () => t.setAlpha(SFX.muted ? 0.3 : 1);
+	scene.events.on('update', f);
+	scene.events.once('shutdown', () => scene.events.off('update', f));
+	return t;
 }
 
 // ---------- 부팅: 텍스처 생성 ----------
@@ -165,6 +275,7 @@ class Title extends Phaser.Scene {
 		button(this, W / 2, 610, 260, 64, '보통', 0xfff3b0, () => this.scene.start('Game', { level: 'normal' }));
 		button(this, W / 2, 690, 260, 64, '어려움', 0xffc2d4, () => this.scene.start('Game', { level: 'hard' }));
 		txt(this, W / 2, 755, '최고 점수 ' + hiScore(), 22, '#7a4b6b');
+		soundBtn(this, W - 30, 30);
 	}
 	update() { this.clouds.tilePositionY -= 0.5; }
 }
@@ -181,6 +292,7 @@ class Game extends Phaser.Scene {
 		this.cl2.tilePositionX = 200;
 
 		this.score = 0; this.hp = this.df.hp; this.power = 1; this.invuln = 0;
+		this.bombs = this.df.bomb; this.bombCd = 0;
 		this.over = false; this.boss = null; this.bossCalled = false; this.wavesSpawned = 0;
 		this.god = PARAMS.has('god');
 
@@ -199,13 +311,26 @@ class Game extends Phaser.Scene {
 		this.scoreTxt = txt(this, W - 16, 28, '0', 28).setOrigin(1, 0.5).setDepth(20);
 		this.powTxt = txt(this, 16, 62, '', 18).setOrigin(0, 0.5).setDepth(20);
 		this.bossBar = this.add.graphics().setDepth(20);
+		// 폭탄 버튼 (화면 오른쪽 아래) + 소리 버튼
+		this.bombBtn = this.add.circle(W - 56, H - 56, 36, 0xffe3f0, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
+		this.bombBtn.on('pointerdown', () => this.useBomb());
+		this.add.image(W - 56, H - 62, 'bomb').setDepth(21);
+		this.bombTxt = txt(this, W - 56, H - 34, '', 18).setDepth(21);
+		soundBtn(this, W - 26, 64).setDepth(20);
 		this.refreshUI();
 
 		// 입력: 드래그(터치/마우스) + 키보드
 		this.cur = this.input.keyboard.createCursorKeys();
 		this.wasd = this.input.keyboard.addKeys('W,A,S,D');
-		this.input.on('pointerdown', p => { this.dragS = { px: p.x, py: p.y, x: this.player.x, y: this.player.y }; });
-		this.input.on('pointerup', () => { this.dragS = null; });
+		this.input.addPointer(1); // 한 손가락으로 이동, 다른 손가락으로 폭탄 버튼
+		this.input.on('pointerdown', (p, over) => {
+			if (over.length || this.over) return; // 버튼 위에서 시작한 터치는 이동으로 쓰지 않는다
+			this.dragS = { ptr: p, px: p.x, py: p.y, x: this.player.x, y: this.player.y };
+		});
+		this.input.on('pointerup', p => { if (this.dragS && this.dragS.ptr === p) this.dragS = null; });
+		this.input.keyboard.on('keydown-SPACE', () => this.useBomb());
+		this.input.keyboard.on('keydown-B', () => this.useBomb());
+		this.input.keyboard.on('keydown-M', () => SFX.toggle());
 
 		// 자동 연사
 		this.time.addEvent({ delay: 170, loop: true, callback: () => { if (!this.over) this.fire(); } });
@@ -235,6 +360,8 @@ class Game extends Phaser.Scene {
 		this.hearts.forEach((h, i) => h.setTexture(i < this.hp ? 'heart' : 'heart_e'));
 		this.scoreTxt.setText(String(this.score));
 		this.powTxt.setText('★ x' + this.power);
+		this.bombTxt.setText('x' + this.bombs);
+		this.bombBtn.setAlpha(this.bombs > 0 ? 0.9 : 0.4);
 	}
 	banner(s, color) {
 		const t = txt(this, W / 2, 300, s, 48, color || '#ff6b81').setDepth(30);
@@ -251,6 +378,7 @@ class Game extends Phaser.Scene {
 
 	// ----- 플레이어 -----
 	fire() {
+		SFX.shoot();
 		const x = this.player.x, y = this.player.y - 22;
 		const shots = this.power === 1 ? [[0, 0]] : this.power === 2 ? [[-10, 0], [10, 0]] : [[-14, -80], [0, 0], [14, 80]];
 		shots.forEach(([dx, vx]) => {
@@ -261,6 +389,7 @@ class Game extends Phaser.Scene {
 	hurt() {
 		if (this.over || this.god || this.time.now < this.invuln) return;
 		this.hp--;
+		SFX.hurt();
 		this.invuln = this.time.now + 1500;
 		this.cameras.main.shake(150, 0.004);
 		this.eBul.clear(true, true); // 맞으면 화면 탄 정리 (너그러운 룰)
@@ -269,7 +398,9 @@ class Game extends Phaser.Scene {
 	}
 	collect(it) {
 		if (it.kind === 'star') { this.power = Math.min(3, this.power + 1); this.score += 200; }
+		else if (it.kind === 'bomb') this.bombs = Math.min(5, this.bombs + 1);
 		else this.hp = Math.min(this.df.hp, this.hp + 1);
+		SFX.item(it.kind);
 		this.burst(it.x, it.y, 6);
 		it.destroy();
 		this.refreshUI();
@@ -338,6 +469,7 @@ class Game extends Phaser.Scene {
 	wave(n) {
 		this.wavesSpawned = n;
 		this.banner('WAVE ' + n);
+		SFX.wave();
 		if (n === 1) {
 			for (let i = 0; i < 8; i++)
 				this.spawnEnemy('jelly', { x: 60 + i * 51, y: 120 }, { x: -40, y: 350 }, i * 170);
@@ -359,6 +491,7 @@ class Game extends Phaser.Scene {
 	spawnBoss() {
 		if (this.over) return;
 		this.banner('BOSS!', '#7a4b6b');
+		SFX.bossIn();
 		const b = this.enemies.create(W / 2, -80, 'boss').setDepth(3);
 		b.isBoss = true; b.mode = 'boss_in'; b.kind = 'boss';
 		b.maxHp = b.hp = this.df.boss;
@@ -372,14 +505,20 @@ class Game extends Phaser.Scene {
 	hitEnemy(b, e) {
 		if (!e.active || e.mode === 'wait' || e.mode === 'boss_in') return;
 		b.destroy();
-		e.hp--;
+		this.damage(e, 1);
+	}
+	// 총알과 폭탄이 함께 쓰는 피해 처리
+	damage(e, n) {
+		e.hp -= n;
 		e.setTintFill(0xffffff);
 		this.time.delayedCall(60, () => { if (e.active) e.clearTint(); });
 		if (e.hp <= 0) this.kill(e);
+		else SFX.tick();
 	}
 	kill(e) {
 		if (e.tw) e.tw.stop();
 		this.score += e.isBoss ? 5000 : 100;
+		SFX.pop(e.isBoss);
 		this.burst(e.x, e.y, e.isBoss ? 40 : 10);
 		if (e.isBoss) {
 			this.boss = null;
@@ -392,6 +531,7 @@ class Game extends Phaser.Scene {
 		const r = Math.random();
 		if (r < 0.10) this.drop(e.x, e.y, 'star');
 		else if (r < 0.17 && this.hp < this.df.hp) this.drop(e.x, e.y, 'heart');
+		else if (r > 0.95 && this.bombs < 5) this.drop(e.x, e.y, 'bomb');
 		e.destroy();
 		this.refreshUI();
 	}
@@ -401,10 +541,32 @@ class Game extends Phaser.Scene {
 		it.body.setVelocity(0, 110);
 	}
 
+	// ----- 폭탄 -----
+	// 화면의 적 탄을 모두 지우고, 일반 적은 한 방에 처치, 보스에게는 8 피해. 잠깐 무적.
+	useBomb() {
+		if (this.over || this.time.now < this.bombCd) return;
+		if (this.bombs <= 0) { SFX.empty(); return; }
+		this.bombs--;
+		this.bombCd = this.time.now + 700;
+		this.invuln = Math.max(this.invuln, this.time.now + 1500);
+		SFX.bomb();
+		this.cameras.main.flash(250, 255, 235, 248);
+		const ring = this.add.circle(this.player.x, this.player.y, 20, 0xffffff, 0.35).setStrokeStyle(3, 0xff9fb5).setDepth(25);
+		this.tweens.add({ targets: ring, scale: 25, alpha: 0, duration: 600, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
+		this.burst(this.player.x, this.player.y, 30);
+		this.eBul.clear(true, true);
+		this.enemies.getChildren().slice().forEach(e => {
+			if (!e.active || e.mode === 'wait' || e.mode === 'boss_in') return;
+			this.damage(e, e.isBoss ? 8 : 99);
+		});
+		this.refreshUI();
+	}
+
 	// ----- 종료 화면 -----
 	end(win) {
 		if (this.over) return;
 		this.over = true;
+		if (win) SFX.clear(); else SFX.over();
 		this.player.setVisible(false);
 		hiScore(this.score);
 		this.add.rectangle(0, 0, W, H, 0xffffff, 0.55).setOrigin(0).setDepth(40);
@@ -424,10 +586,10 @@ class Game extends Phaser.Scene {
 		const p = this.player;
 
 		// 이동: 드래그(상대 이동) 또는 키보드
-		const ptr = this.input.activePointer;
-		if (this.dragS && ptr.isDown) {
-			p.x += (this.dragS.x + ptr.x - this.dragS.px - p.x) * 0.4;
-			p.y += (this.dragS.y + ptr.y - this.dragS.py - p.y) * 0.4;
+		const ds = this.dragS;
+		if (ds && ds.ptr.isDown) {
+			p.x += (ds.x + ds.ptr.x - ds.px - p.x) * 0.4;
+			p.y += (ds.y + ds.ptr.y - ds.py - p.y) * 0.4;
 		} else {
 			const k = this.cur, w = this.wasd;
 			const vx = (k.right.isDown || w.D.isDown ? 1 : 0) - (k.left.isDown || w.A.isDown ? 1 : 0);
