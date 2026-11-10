@@ -15,7 +15,7 @@ const DIFF = {
 // ---------- 도트 스프라이트 정의 ----------
 const PAL = {
 	o: '#7a4b6b', w: '#fff6f2', k: '#4a3050', p: '#ff9fb5', b: '#9fd8ff',
-	g: '#a8ecc8', c: '#fff3b0', r: '#ff6b81', y: '#ffe066', s: '#d9c7ff', x: '#c9c3cc'
+	g: '#a8ecc8', c: '#fff3b0', r: '#ff6b81', y: '#ffe066', s: '#d9c7ff', x: '#c9c3cc', f: '#ff9a3c'
 };
 const SPR = {
 	player: { px: 4, rows: [
@@ -62,7 +62,28 @@ const SPR = {
 		'.occcccccccccccccco.',
 		'.oppppppppppppppppo.',
 		'..oooooooooooooooo..'] },
-	pbullet: { px: 3, rows: ['..y..', '.yyy.', 'yyyyy', '.yyy.', '..y..'] },
+	// 내 총알: 진한 외곽선 + 오른쪽 아래 그림자 + 꼬리 불꽃 (불꽃 모양 2종을 섞어 일렁이게)
+	pbullet: { px: 3, shadow: true, rows: [
+		'...o...',
+		'..oyo..',
+		'.oyyyo.',
+		'oyywyyo',
+		'.oyyyo.',
+		'..oyo..',
+		'...f...',
+		'..frf..',
+		'..frf..',
+		'...f...'] },
+	pbullet2: { px: 3, shadow: true, rows: [
+		'...o...',
+		'..oyo..',
+		'.oyyyo.',
+		'oyywyyo',
+		'.oyyyo.',
+		'..oyo..',
+		'...f...',
+		'..frf..',
+		'...r...'] },
 	ebullet: { px: 4, rows: ['.ooo.', 'opppo', 'opwpo', 'opppo', '.ooo.'] },
 	heart: { px: 4, rows: ['.oo.oo.', 'orrorro', 'orrrrro', '.orrro.', '..oro..', '...o...'] },
 	star: { px: 4, rows: ['..o..', '.oyo.', 'oyyyo', '.oyo.', 'o.o.o'] },
@@ -85,10 +106,18 @@ const VARIANTS = {
 	heart_e: ['heart', { r: '#e6dde4' }]
 };
 
-function makeTex(scene, key, rows, px, pal) {
+function makeTex(scene, key, rows, px, pal, shadow) {
 	if (scene.textures.exists(key)) return;
-	const c = scene.textures.createCanvas(key, rows[0].length * px, rows.length * px);
+	const sh = shadow ? 1 : 0; // 그림자는 오른쪽·아래로 1칸 삐져나오므로 캔버스를 1칸 키운다
+	const c = scene.textures.createCanvas(key, (rows[0].length + sh) * px, (rows.length + sh) * px);
 	const ctx = c.getContext('2d');
+	if (shadow) {
+		// 그림자를 먼저 깔아야 본체 칸이 가려지지 않는다 (불꽃 칸은 그림자 없음)
+		ctx.fillStyle = 'rgba(74,48,80,0.3)';
+		rows.forEach((row, y) => [...row].forEach((ch, x) => {
+			if (ch !== '.' && ch !== 'f' && ch !== 'r') ctx.fillRect((x + 1) * px, (y + 1) * px, px, px);
+		}));
+	}
 	rows.forEach((row, y) => [...row].forEach((ch, x) => {
 		if (ch === '.') return;
 		ctx.fillStyle = pal[ch];
@@ -249,7 +278,7 @@ function soundBtn(scene, x, y) {
 class Boot extends Phaser.Scene {
 	constructor() { super('Boot'); }
 	create() {
-		Object.entries(SPR).forEach(([k, s]) => makeTex(this, k, s.rows, s.px, PAL));
+		Object.entries(SPR).forEach(([k, s]) => makeTex(this, k, s.rows, s.px, PAL, s.shadow));
 		Object.entries(VARIANTS).forEach(([k, [base, pal]]) =>
 			makeTex(this, k, SPR[base].rows, SPR[base].px, Object.assign({}, PAL, pal)));
 		makeBg(this);
@@ -379,10 +408,11 @@ class Game extends Phaser.Scene {
 	// ----- 플레이어 -----
 	fire() {
 		SFX.shoot();
-		const x = this.player.x, y = this.player.y - 22;
+		const x = this.player.x, y = this.player.y - 30;
 		const shots = this.power === 1 ? [[0, 0]] : this.power === 2 ? [[-10, 0], [10, 0]] : [[-14, -80], [0, 0], [14, 80]];
 		shots.forEach(([dx, vx]) => {
-			const b = this.pBul.create(x + dx, y, 'pbullet').setDepth(4);
+			const b = this.pBul.create(x + dx, y, Math.random() < 0.5 ? 'pbullet' : 'pbullet2').setDepth(4);
+			b.body.setSize(15, 15).setOffset(3, 0); // 판정은 머리 부분만 (꼬리 불꽃·그림자는 제외)
 			b.body.setVelocity(vx, -620);
 		});
 	}
