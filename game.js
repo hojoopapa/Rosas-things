@@ -741,9 +741,16 @@ class Game extends Phaser.Scene {
 		this.refreshUI();
 	}
 	drop(x, y, kind) {
-		const it = this.items.create(x, y, ITEM_TEX[kind]).setDepth(4);
+		const it = this.items.create(x, y, ITEM_TEX[kind]).setDepth(5).setScale(1.5);
 		it.kind = kind;
 		it.body.setVelocity(0, 110);
+		// 적과 구분되도록: 종류별 색 후광(두근두근 커졌다 작아짐) + 좌우 살랑살랑
+		const col = { heart: 0xff9fb5, star: 0xffe066, bomb: 0xff6b81, shield: 0x9fd8ff }[kind];
+		const halo = this.add.circle(x, y, 30, 0xffffff, 0.55).setStrokeStyle(4, col).setDepth(4);
+		this.tweens.add({ targets: halo, scale: 1.3, alpha: 0.25, duration: 450, yoyo: true, repeat: -1 });
+		this.tweens.add({ targets: it, angle: { from: -12, to: 12 }, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+		it.halo = halo;
+		it.once('destroy', () => { this.tweens.killTweensOf([halo, it]); halo.destroy(); });
 	}
 
 	// ----- 폭탄 -----
@@ -963,6 +970,8 @@ class Game extends Phaser.Scene {
 		});
 		if (this.boss) this.bossUpdate(this.boss, time);
 		this.shieldUpdate(time);
+
+		this.items.children.each(i => { if (i.active && i.halo) i.halo.setPosition(i.x, i.y); });
 
 		// 화면 밖 정리
 		[this.pBul, this.eBul, this.items].forEach(g => g.children.each(o => {
