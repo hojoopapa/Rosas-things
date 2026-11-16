@@ -13,7 +13,8 @@ let PAD = (() => {
 	return 1;
 })();
 let PAD_Y, PLAYER_Y; // 패드 윗선, 밀기 모드의 기체 높이
-function applyPad() { PAD_Y = PAD === 2 ? H - 250 : H - 110; PLAYER_Y = PAD === 2 ? H - 330 : H - 200; }
+function applyPad() { PAD_Y = PAD === 2 ? H - 260 : H - 110; PLAYER_Y = H - 200; }
+const JOY_POS = { x: 96, y: H - 112 }; // 조이스틱 모드: 왼쪽 아래 고정 조이스틱, 오른쪽에 버튼 2개
 applyPad();
 function setPad(v) {
 	PAD = v;
@@ -493,14 +494,16 @@ class Game extends Phaser.Scene {
 		this.bossBar = this.add.graphics().setDepth(20);
 		this.stageTxt = txt(this, W / 2, 28, this.stage + '/' + MAX_STAGE, 20).setDepth(20);
 		// 폭탄(입에서 뱉는 장미 폭탄) 버튼은 오른쪽 아래, 망토 방패 버튼은 왼쪽 아래 + 소리 버튼
-		this.bombBtn = this.add.circle(W - 56, H - 56, 36, 0xffe3f0, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
+		// 밀기 모드: 폭탄 오른쪽 아래, 방패 왼쪽 아래. 조이스틱 모드: 둘 다 오른쪽에 세로로 (왼쪽은 조이스틱 자리)
+		const bp = { x: W - 56, y: H - 56 }, sp = PAD === 2 ? { x: W - 56, y: H - 156 } : { x: 56, y: H - 56 };
+		this.bombBtn = this.add.circle(bp.x, bp.y, 36, 0xffe3f0, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
 		this.bombBtn.on('pointerdown', () => this.useBomb());
-		this.add.image(W - 56, H - 62, 'bomb').setDepth(21);
-		this.bombTxt = txt(this, W - 56, H - 30, '', 18).setDepth(21);
-		this.shieldBtn = this.add.circle(56, H - 56, 36, 0xfff6c8, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
+		this.add.image(bp.x, bp.y - 6, 'bomb').setDepth(21);
+		this.bombTxt = txt(this, bp.x, bp.y + 26, '', 18).setDepth(21);
+		this.shieldBtn = this.add.circle(sp.x, sp.y, 36, 0xfff6c8, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
 		this.shieldBtn.on('pointerdown', () => this.useShield());
-		this.add.image(56, H - 62, 'capeIcon').setDepth(21);
-		this.shieldTxt = txt(this, 56, H - 30, '', 18).setDepth(21);
+		this.add.image(sp.x, sp.y - 6, 'capeIcon').setDepth(21);
+		this.shieldTxt = txt(this, sp.x, sp.y + 26, '', 18).setDepth(21);
 		this.shieldImg = this.add.image(0, 0, 'capeShield').setDepth(6).setVisible(false);
 		soundBtn(this, W - 26, 64).setDepth(20);
 		this.refreshUI();
@@ -512,9 +515,9 @@ class Game extends Phaser.Scene {
 		this.input.on('pointerdown', (p, over) => {
 			if (over.length || this.over) return; // 버튼 위에서 시작한 터치는 이동으로 쓰지 않는다
 			if (p.y < PAD_Y) return; // 아래 패드에서 시작한 터치만 이동
+			if (PAD === 2 && Phaser.Math.Distance.Between(p.x, p.y, JOY_POS.x, JOY_POS.y) > 150) return; // 조이스틱 모드: 조이스틱 근처에서 시작한 터치만
 			this.dragS = { ptr: p, px: p.x, py: p.y, x: this.player.x, y: this.player.y };
-			// 조이스틱은 처음 터치한 곳에 중심을 놓는다 (패드 안, 모서리 버튼과 겹치지 않게)
-			this.joy = { x: Phaser.Math.Clamp(p.x, 90, W - 90), y: Phaser.Math.Clamp(p.y, PAD_Y + 60, H - 120) };
+
 			this.endTut();
 		});
 		this.input.on('pointerup', p => { if (this.dragS && this.dragS.ptr === p) this.dragS = null; });
@@ -935,27 +938,29 @@ class Game extends Phaser.Scene {
 
 	// ----- 하단 터치 패드: 1 밀기(좌우), 2 조이스틱(전후좌우) -----
 	setupPad() {
-		const fill = PAD === 1 ? 0xffd6e7 : 0xd6ecff, line = PAD === 1 ? 0xff9fb5 : 0x9fd8ff, h = H - PAD_Y - 8;
-		const g = this.add.graphics().setDepth(15);
-		g.fillStyle(fill, 0.6).fillRoundedRect(8, PAD_Y, W - 16, h, 26);
-		g.lineStyle(4, line, 1).strokeRoundedRect(8, PAD_Y, W - 16, h, 26);
-		const cy = PAD_Y + h / 2 + 4;
+		const line = PAD === 1 ? 0xff9fb5 : 0x9fd8ff;
 		this.padLine = line;
-		if (PAD === 1) { // 밀기: 좌우 홈(레일)
+		let cy;
+		if (PAD === 1) { // 밀기: 아래 가로 패드와 좌우 홈(레일)
+			const h = H - PAD_Y - 8, g = this.add.graphics().setDepth(15);
+			g.fillStyle(0xffd6e7, 0.6).fillRoundedRect(8, PAD_Y, W - 16, h, 26);
+			g.lineStyle(4, line, 1).strokeRoundedRect(8, PAD_Y, W - 16, h, 26);
+			cy = PAD_Y + h / 2 + 4;
 			g.lineStyle(8, line, 0.8).lineBetween(60, cy, W - 60, cy);
 			g.fillStyle(line, 0.8).fillCircle(60, cy, 8).fillCircle(W - 60, cy, 8);
-		} else {         // 조이스틱: 받침과 손잡이는 매 프레임 그린다
+		} else {         // 조이스틱: 왼쪽 아래 둥근 조이스틱(고정), 패드 판은 없다
 			this.joyG = this.add.graphics().setDepth(16);
-			this.joy = { x: W / 2, y: cy };
+			this.joy = JOY_POS;
+			cy = JOY_POS.y;
 		}
 		this.padCy = cy;
 
 		// 손가락 안내: 처음엔 좌우로 왔다갔다, 이후엔 터치를 따라다닌다
-		this.finger = this.add.image(W / 2, cy, 'finger').setOrigin(0.4, 0.05).setDepth(22);
+		const cx = PAD === 1 ? W / 2 : JOY_POS.x, span = PAD === 1 ? 110 : 34;
+		this.finger = this.add.image(cx, cy, 'finger').setOrigin(0.4, 0.05).setDepth(22);
 		this.tut = true;
-		const span = PAD === 1 ? 110 : 40;
-		this.fingerTween = this.tweens.add({ targets: this.finger, x: { from: W / 2 - span - (PAD === 1 ? 0 : 0), to: W / 2 + span }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-		this.tutTxt = [txt(this, W / 2, PAD_Y - 26, tr('hint')[PAD], 20, '#7a4b6b').setDepth(22)];
+		this.fingerTween = this.tweens.add({ targets: this.finger, x: { from: cx - span, to: cx + span }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+		this.tutTxt = [txt(this, W / 2, PAD === 1 ? PAD_Y - 26 : H - 215, tr('hint')[PAD], 20, '#7a4b6b').setDepth(22)];
 		this.time.delayedCall(8000, () => this.endTut());
 		if (this.carry) this.endTut(); // 2맵부터는 안내 생략 (터치하면 손가락은 계속 따라다님)
 	}
@@ -983,14 +988,15 @@ class Game extends Phaser.Scene {
 		if (!this.tut) {
 			const f = this.finger;
 			if (down) { f.x = Phaser.Math.Clamp(ds.ptr.x, 16, W - 16); f.y = Phaser.Math.Clamp(ds.ptr.y, PAD_Y + 8, H - 40); }
+			else if (this.joyG) f.setPosition(JOY_POS.x, JOY_POS.y);
 			f.setAlpha(f.alpha + ((down ? 1 : 0) - f.alpha) * 0.3).setScale(down ? 0.9 : 1);
 		}
 		if (this.joyG) {
-			if (!down) this.joy = { x: W / 2, y: this.padCy }; // 손을 떼면 받침이 가운데로 돌아온다
 			const v = this.joyVec(ds), j = this.joy, a = down ? 0.85 : 0.45;
 			this.joyG.clear();
 			this.joyG.fillStyle(0xffffff, 0.35 * (down ? 1.4 : 1)).fillCircle(j.x, j.y, JOY_R + 10);
 			this.joyG.lineStyle(4, this.padLine, a).strokeCircle(j.x, j.y, JOY_R + 10);
+			this.joyG.lineStyle(2, this.padLine, a * 0.7).strokeCircle(j.x, j.y, JOY_R * 0.5);
 			this.joyG.fillStyle(this.padLine, a).fillCircle(j.x + v.kx, j.y + v.ky, 24);
 			this.joyG.lineStyle(4, 0x7a4b6b, a).strokeCircle(j.x + v.kx, j.y + v.ky, 24);
 		}
@@ -1015,7 +1021,7 @@ class Game extends Phaser.Scene {
 			const v = this.joyVec(ds);
 			p.x += (v.x || kx) * JOY_SPEED * dt;
 			p.y += (v.y || ky) * JOY_SPEED * dt;
-			p.y = Phaser.Math.Clamp(p.y, 200, PAD_Y - 40);
+			p.y = Phaser.Math.Clamp(p.y, 120, H - 50);
 		}
 		this.padUpdate();
 		p.x = Phaser.Math.Clamp(p.x, 24, W - 24);
