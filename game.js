@@ -418,11 +418,13 @@ class Title extends Phaser.Scene {
 		txt(this, W / 2, 782, tr('best') + ' ' + hiScore(), 16, '#7a4b6b');
 		soundBtn(this, W - 30, 30);
 
-		// HOREETEC 홈으로 (허브 사이트에 없는 언어는 영어 페이지로)
-		const home = txt(this, 80, 30, '← HOREETEC', 18).setInteractive({ useHandCursor: true });
-		home.on('pointerdown', () => {
-			location.href = 'https://horeetec.com/' + (LANG === 'ko' ? '' : (['en', 'ja', 'zh', 'es'].includes(LANG) ? LANG : 'en') + '/');
-		});
+		// HOREETEC 홈으로 (허브 사이트에 없는 언어는 영어 페이지로). itch.io 같은 iframe 안에서는 숨긴다
+		if (window.top === window.self) {
+			const home = txt(this, 80, 30, '← HOREETEC', 18).setInteractive({ useHandCursor: true });
+			home.on('pointerdown', () => {
+				location.href = 'https://horeetec.com/' + (LANG === 'ko' ? '' : (['en', 'ja', 'zh', 'es'].includes(LANG) ? LANG : 'en') + '/');
+			});
+		}
 	}
 	start(level) {
 		this.scene.start('Game', { level, stage: Number(PARAMS.get('stage')) || 1 });
