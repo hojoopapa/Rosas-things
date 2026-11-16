@@ -1,4 +1,5 @@
 // Rosa's Shot - 파스텔 도트 스프라이트 (말티푸, 꽃 아이템, 보스)
+// 말티푸 영웅·레이저·망토는 art.js 에서 코드로 그린다.
 // 좌우 대칭인 그림은 왼쪽 절반(가운데 칸 포함)만 적고 sym()으로 뒤집어 붙인다.
 const sym = rows => rows.map(r => r + [...r.slice(0, -1)].reverse().join(''));   // 가로 폭 홀수
 const symE = rows => rows.map(r => r + [...r].reverse().join(''));               // 가로 폭 짝수
@@ -9,65 +10,7 @@ const EXTRA_PAL = {
 };
 
 const EXTRA_SPR = {
-	// ---- 내 비행선: 흰 말티푸 (폭신한 털, 늘어진 귀, 하늘색 날개, 꼬리 불꽃) ----
-	player: { px: 4, rows: sym([
-		'....oooo',
-		'..ooxwww',
-		'.oxwwwww',
-		'oocwwwww',
-		'occwkkww',
-		'occwkwww',
-		'occwwwkk',
-		'.occwwwp',
-		'..owwwwp',
-		'..oowwww',
-		'.obboooo',
-		'obbbbbbb',
-		'.bb.bffo',
-		'.....fyf'
-	]) },
-
-	// ---- 꽃 아이템 ----
-	sakura: { px: 4, rows: sym([       // 벚꽃: 체력 회복
-		'..oo.',
-		'.oppo',
-		'oppwp',
-		'opwyy',
-		'oppwp',
-		'.oppo',
-		'..oo.'
-	]) },
-	sunflower: { px: 4, rows: sym([    // 해바라기: 총알 강화
-		'..oyo',
-		'.oyyy',
-		'oyfff',
-		'oyfof',
-		'oyfff',
-		'.oyyy',
-		'..oyo',
-		'...gg'
-	]) },
-	rose: { px: 4, rows: sym([         // 장미: 폭탄
-		'..ooo',
-		'.orrr',
-		'orrpp',
-		'orprr',
-		'orrrr',
-		'.orrr',
-		'..ogo',
-		'.ggog'
-	]) },
-	moon: { px: 4, rows: symE([        // 보름달: 방패 아이콘
-		'...oo',
-		'..occ',
-		'.occy',
-		'occcc',
-		'occyy',
-		'occcy',
-		'.occc',
-		'..occ',
-		'...oo'
-	]) },
+	// ---- 꽃 아이템(벚꽃·해바라기·장미·달맞이꽃)은 art.js 에서 코드로 그린다 ----
 	petal: { px: 3, rows: ['pp.', 'ppp', '.pp'] },
 
 	// ---- 소보스: 곤충 5종 (파리, 모기, 무당벌레, 거미, 나방) ----
@@ -262,9 +205,7 @@ const EXTRA_SPR = {
 };
 
 // 색 바꾼 변형: 소보스 5종 x 3색
-const EXTRA_VAR = {
-	moonflower: ['sunflower', { y: '#9fd8ff', f: '#fff6f2' }]
-};
+const EXTRA_VAR = {};
 for (let i = 0; i < 5; i++) {
 	EXTRA_VAR['sb' + i + '_1'] = ['sb' + i, { B: '#ffb3c8', A: '#fff3b0' }];
 	EXTRA_VAR['sb' + i + '_2'] = ['sb' + i, { B: '#a8ecc8', A: '#ffd0b0' }];

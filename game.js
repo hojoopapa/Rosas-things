@@ -1,28 +1,34 @@
 // Rosa's Shot - 세로 스크롤 슈팅 (15개 맵)
 // 갤러그식 편대 입장/급강하 + 라이덴식 자동 연사 + 보스 탄막
-// 테스트용 주소 인자: ?stage=N 시작 맵, ?boss=1 보스 바로, ?god=1 무적, ?pad=0~5 조작 방식 강제
+// 테스트용 주소 인자: ?stage=N 시작 맵, ?boss=1 보스 바로, ?god=1 무적, ?pad=1~2 조작 방식 강제(1 밀기, 2 조이스틱)
 const W = 480, H = 800;
 const FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Yu Gothic", "Hiragino Sans", "Microsoft YaHei", "PingFang SC", sans-serif';
 const QB = Phaser.Math.Interpolation.QuadraticBezier;
 const PARAMS = new URLSearchParams(location.search);
 const MAX_STAGE = 15;
-// 하단 터치 패드 스타일 1~5 (사용자가 타이틀에서 선택, 저장됨). 0이면 예전 전체화면 드래그
+// 조작 방식 2가지 (타이틀에서 선택, 저장됨): 1 밀기(좌우), 2 조이스틱(전후좌우)
 let PAD = (() => {
-	if (PARAMS.has('pad')) return Math.min(5, Math.max(0, Number(PARAMS.get('pad')) || 0));
-	try { const v = Number(localStorage.getItem('rs_pad')); if (v >= 1 && v <= 5) return v; } catch (e) { /* 무시 */ }
+	if (PARAMS.has('pad')) return Number(PARAMS.get('pad')) === 2 ? 2 : 1;
+	try { if (localStorage.getItem('rs_ctl') === '2') return 2; } catch (e) { /* 무시 */ }
 	return 1;
 })();
+let PAD_Y, PLAYER_Y; // 패드 윗선, 밀기 모드의 기체 높이
+function applyPad() { PAD_Y = PAD === 2 ? H - 250 : H - 110; PLAYER_Y = PAD === 2 ? H - 330 : H - 200; }
+applyPad();
 function setPad(v) {
 	PAD = v;
-	try { localStorage.setItem('rs_pad', String(v)); } catch (e) { /* 무시 */ }
+	applyPad();
+	try { localStorage.setItem('rs_ctl', String(v)); } catch (e) { /* 무시 */ }
 }
-const PAD_Y = H - 110, PLAYER_Y = H - 200;
+const JOY_R = 56, JOY_SPEED = 330; // 조이스틱 반지름, 기체 최고 속도(px/초)
 
 // 난이도: hp=하트 수, bs=적 탄속 배율, fire=적 발사 간격 배율, boss=보스 체력, bomb/shield=시작 개수
+// 2026-11-16 전체 30% 상향: 발사·급강하 빈도 x1.3, 보스 체력 x1.3, 탄속 x1.15 (탄속은 30%를 다 올리면 피할 수 없어 절반 수준)
+const HARD_K = 1.3;
 const DIFF = {
-	easy:   { hp: 5, bs: 0.75, fire: 1.6, boss: 40, bomb: 3, shield: 1 },
-	normal: { hp: 3, bs: 1.0,  fire: 1.0, boss: 60, bomb: 2, shield: 1 },
-	hard:   { hp: 3, bs: 1.25, fire: 0.7, boss: 80, bomb: 2, shield: 1 }
+	easy:   { hp: 5, bs: 0.75 * 1.15, fire: 1.6 / HARD_K, boss: Math.round(40 * HARD_K), bomb: 3, shield: 1 },
+	normal: { hp: 3, bs: 1.0 * 1.15,  fire: 1.0 / HARD_K, boss: Math.round(60 * HARD_K), bomb: 2, shield: 1 },
+	hard:   { hp: 3, bs: 1.25 * 1.15, fire: 0.7 / HARD_K, boss: Math.round(80 * HARD_K), bomb: 2, shield: 1 }
 };
 // 맵 배경 색 (3맵마다 바뀜)
 const SKY_TINT = [0xffffff, 0xfff0d0, 0xdcffe8, 0xeadcff, 0xffdce8];
@@ -50,18 +56,6 @@ const SPR = {
 		'..owwwwwwwo.',
 		'...owwwwwo..',
 		'...ooooooo..'] },
-	player: { px: 4, rows: [
-		'..o.....o..',
-		'.owo...owo.',
-		'.owwwwwwwo.',
-		'owwkwwwkwwo',
-		'owwwwpwwwwo',
-		'opwwwwwwwpo',
-		'.owwwwwwwo.',
-		'..bbbbbbb..',
-		'.bbbbbbbbb.',
-		'bbbbbbbbbbb',
-		'.bb.bbb.bb.'] },
 	jelly: { px: 4, rows: [
 		'...oooo...',
 		'..oggggo..',
@@ -94,42 +88,46 @@ const SPR = {
 		'.occcccccccccccccco.',
 		'.oppppppppppppppppo.',
 		'..oooooooooooooooo..'] },
-	// 내 총알: 진한 외곽선 + 오른쪽 아래 그림자 + 꼬리 불꽃 (불꽃 모양 2종을 섞어 일렁이게)
-	pbullet: { px: 3, shadow: true, rows: [
-		'...o...',
-		'..oyo..',
-		'.oyyyo.',
-		'oyywyyo',
-		'.oyyyo.',
-		'..oyo..',
-		'...f...',
-		'..frf..',
-		'..frf..',
-		'...f...'] },
-	pbullet2: { px: 3, shadow: true, rows: [
-		'...o...',
-		'..oyo..',
-		'.oyyyo.',
-		'oyywyyo',
-		'.oyyyo.',
-		'..oyo..',
-		'...f...',
-		'..frf..',
-		'...r...'] },
+	// 내 총알: 눈에서 나가는 레이저. fine=true 는 1칸=1px 로 그대로 그리는 그림 (모양 2종을 섞어 일렁이게)
+	pbullet: { fine: true, pal: { a: '#ff3d6b', b: '#ff9fb5', c: '#ffffff' }, rows: [
+		'.....a.....',
+		'....aba....',
+		'...abcba...',
+		'...abcba...',
+		'..aabcbaa..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'...abcba...',
+		'...abcba...',
+		'....bcb....',
+		'....bcb....',
+		'.....b.....',
+		'.....b.....',
+		'.....b.....'] },
+	pbullet2: { fine: true, pal: { a: '#ff3d6b', b: '#ff9fb5', c: '#ffffff' }, rows: [
+		'.....a.....',
+		'....aba....',
+		'...abcba...',
+		'...abcba...',
+		'..aabcbaa..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'..abbcbba..',
+		'...abcba...',
+		'...abcba...',
+		'....bcb....',
+		'.....c.....',
+		'.....b.....'] },
 	ebullet: { px: 4, rows: ['.ooo.', 'opppo', 'opwpo', 'opppo', '.ooo.'] },
 	heart: { px: 4, rows: ['.oo.oo.', 'orrorro', 'orrrrro', '.orrro.', '..oro..', '...o...'] },
 	star: { px: 4, rows: ['..o..', '.oyo.', 'oyyyo', '.oyo.', 'o.o.o'] },
-	spark: { px: 3, rows: ['.y.', 'yyy', '.y.'] },
-	bomb: { px: 4, rows: [
-		'....y....',
-		'....o....',
-		'..ooooo..',
-		'.ossssso.',
-		'osswsssso',
-		'oskssskso',
-		'ossssssso',
-		'.ossssso.',
-		'..ooooo..'] }
+	spark: { px: 3, rows: ['.y.', 'yyy', '.y.'] }
 };
 // 색 바꾼 변형 (젤리 3색, 빈 하트)
 const VARIANTS = {
@@ -138,67 +136,103 @@ const VARIANTS = {
 	heart_e: ['heart', { r: '#e6dde4' }]
 };
 
-function makeTex(scene, key, rows, px, pal, shadow) {
-	if (scene.textures.exists(key)) return;
-	const sh = shadow ? 1 : 0; // 그림자는 오른쪽·아래로 1칸 삐져나오므로 캔버스를 1칸 키운다
-	const c = scene.textures.createCanvas(key, (rows[0].length + sh) * px, (rows.length + sh) * px);
-	const ctx = c.getContext('2d');
-	if (shadow) {
-		// 그림자를 먼저 깔아야 본체 칸이 가려지지 않는다 (불꽃 칸은 그림자 없음)
-		ctx.fillStyle = 'rgba(74,48,80,0.3)';
-		rows.forEach((row, y) => [...row].forEach((ch, x) => {
-			if (ch !== '.' && ch !== 'f' && ch !== 'r') ctx.fillRect((x + 1) * px, (y + 1) * px, px, px);
-		}));
+// ---------- 도트 정밀화 ----------
+// 원본 그림(1칸=px)을 4배 세밀한 격자(1칸=px/4)로 키운다. 모서리는 EPX 로 매끈하게 두 번 보정하고,
+// 굵은 윤곽선은 바깥 1칸만 남겨 얇게 만든 뒤, 가장자리에 밝은/어두운 띠를 넣어 입체감을 준다.
+const FINE = 4;
+function epx(g) {
+	const h = g.length, w = g[0].length, out = [];
+	const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? '.' : g[y][x];
+	for (let y = 0; y < h; y++) {
+		const r0 = [], r1 = [];
+		for (let x = 0; x < w; x++) {
+			const P = g[y][x], A = at(x, y - 1), B = at(x + 1, y), C = at(x - 1, y), D = at(x, y + 1);
+			let p1 = P, p2 = P, p3 = P, p4 = P;
+			if (C === A && C !== D && A !== B) p1 = A;
+			if (A === B && A !== C && B !== D) p2 = B;
+			if (D === C && D !== B && C !== A) p3 = C;
+			if (B === D && B !== A && D !== C) p4 = D;
+			r0.push(p1, p2); r1.push(p3, p4);
+		}
+		out.push(r0, r1);
 	}
-	rows.forEach((row, y) => [...row].forEach((ch, x) => {
-		if (ch === '.') return;
-		ctx.fillStyle = pal[ch];
-		ctx.fillRect(x * px, y * px, px, px);
-	}));
+	return out;
+}
+const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const rgb2css = c => 'rgb(' + c.map(v => Math.round(Math.max(0, Math.min(255, v)))).join(',') + ')';
+
+function makeTex(scene, key, rows, px, pal, fine) {
+	if (scene.textures.exists(key)) return;
+	if (fine) { // 이미 최종 크기: 1칸=1px
+		const c = scene.textures.createCanvas(key, rows[0].length, rows.length), ctx = c.getContext('2d');
+		rows.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== '.') { ctx.fillStyle = pal[ch]; ctx.fillRect(x, y, 1, 1); } }));
+		c.refresh();
+		return;
+	}
+	const g = epx(epx(rows.map(r => [...r]))), GH = g.length, GW = g[0].length;
+	const empty = (x, y) => x < 0 || y < 0 || x >= GW || y >= GH || g[y][x] === '.';
+	// 1. 윤곽선 정리: 바깥에 닿은 칸만 윤곽선으로 두고, 안쪽의 굵은 윤곽선은 주변 색으로 메운다
+	const fix = g.map(r => r.slice());
+	for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+		if (g[y][x] !== 'o' || empty(x - 1, y) || empty(x + 1, y) || empty(x, y - 1) || empty(x, y + 1)) continue;
+		const cnt = {};
+		for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+			const ch = empty(x + dx, y + dy) ? '.' : g[y + dy][x + dx];
+			if (ch !== '.' && ch !== 'o') cnt[ch] = (cnt[ch] || 0) + 1;
+		}
+		const best = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+		if (best) fix[y][x] = best;
+	}
+	const isLine = (x, y) => empty(x, y) || fix[y][x] === 'o';
+	const OUT = hex2rgb(pal.o);
+	// 2. 칸마다 색을 정해 그린다
+	const s = px / FINE, tw = Math.ceil(GW * s), th = Math.ceil(GH * s);
+	const c = scene.textures.createCanvas(key, tw, th), ctx = c.getContext('2d');
+	for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+		const ch = fix[y][x];
+		if (ch === '.') continue;
+		let col;
+		if (ch === 'o') { // 윤곽선: 붙어 있는 몸 색을 어둡게 섞어 부드럽게
+			let near = null;
+			for (let dy = -2; dy <= 2 && !near; dy++) for (let dx = -2; dx <= 2 && !near; dx++)
+				if (!empty(x + dx, y + dy) && fix[y + dy][x + dx] !== 'o') near = hex2rgb(pal[fix[y + dy][x + dx]]);
+			col = near ? near.map((v, i) => v * 0.35 + OUT[i] * 0.65) : OUT;
+		} else {
+			col = hex2rgb(pal[ch]);
+			if (ch !== 'k') {
+				const hi = isLine(x - 1, y - 1) || isLine(x - 1, y) || isLine(x, y - 1) || isLine(x - 2, y - 2);
+				const lo = isLine(x + 1, y + 1) || isLine(x + 1, y) || isLine(x, y + 1) || isLine(x + 2, y + 2);
+				if (hi && !lo) col = col.map(v => v + (255 - v) * 0.35);
+				else if (lo && !hi) col = col.map((v, i) => v * 0.8 + OUT[i] * 0.12);
+			}
+		}
+		ctx.fillStyle = rgb2css(col);
+		const x0 = Math.round(x * s), y0 = Math.round(y * s);
+		ctx.fillRect(x0, y0, Math.max(1, Math.round((x + 1) * s) - x0), Math.max(1, Math.round((y + 1) * s) - y0));
+	}
+	c.refresh();
+}
+
+// 작게 줄인 복사본(타이틀 미리보기용): 도트 그림을 부드럽게 줄여 새 텍스처로
+function makeSmall(scene, src, key, k) {
+	if (scene.textures.exists(key)) return;
+	const img = scene.textures.get(src).getSourceImage(), w = Math.round(img.width * k), h = Math.round(img.height * k);
+	const c = scene.textures.createCanvas(key, w, h), ctx = c.getContext('2d');
+	ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+	ctx.drawImage(img, 0, 0, w, h);
 	c.refresh();
 }
 
 function makeBg(scene) {
 	// 하늘 그라데이션 (고정)
-	let c = scene.textures.createCanvas('sky', W, H);
-	let ctx = c.getContext('2d');
+	const c = scene.textures.createCanvas('sky', W, H), ctx = c.getContext('2d');
 	const g = ctx.createLinearGradient(0, 0, 0, H);
 	g.addColorStop(0, '#bfe8ff');
 	g.addColorStop(1, '#ffdff0');
 	ctx.fillStyle = g;
 	ctx.fillRect(0, 0, W, H);
 	c.refresh();
-	// 구름 (세로로 이어 붙는 스크롤용, 가장자리에 걸치지 않게 배치)
-	c = scene.textures.createCanvas('clouds', W, H);
-	ctx = c.getContext('2d');
-	ctx.fillStyle = 'rgba(255,255,255,0.85)';
-	const P = 8;
-	for (let i = 0; i < 9; i++) {
-		const cx = Phaser.Math.Between(40, W - 140), cy = 80 + i * 80 + Phaser.Math.Between(-10, 10);
-		const w = Phaser.Math.Between(5, 8);
-		for (let k = 0; k < w; k++) ctx.fillRect(cx + k * P, cy, P, P);
-		for (let k = 1; k < w - 1; k++) ctx.fillRect(cx + k * P, cy - P, P, P);
-		for (let k = 2; k < w - 2; k++) ctx.fillRect(cx + k * P, cy - 2 * P, P, P);
-	}
-	c.refresh();
-}
-
-// 달 방패: 크고 포근한 보름달 (노란 후광 + 크레이터)
-function makeShield(scene) {
-	const S = 200, c = scene.textures.createCanvas('moonShield', S, S), ctx = c.getContext('2d');
-	const g = ctx.createRadialGradient(S / 2, S / 2, 40, S / 2, S / 2, S / 2);
-	g.addColorStop(0, 'rgba(255,246,190,0.55)');
-	g.addColorStop(0.75, 'rgba(255,236,150,0.45)');
-	g.addColorStop(1, 'rgba(255,236,150,0)');
-	ctx.fillStyle = g;
-	ctx.fillRect(0, 0, S, S);
-	ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 6;
-	ctx.beginPath(); ctx.arc(S / 2, S / 2, 84, 0, Math.PI * 2); ctx.stroke();
-	ctx.fillStyle = 'rgba(255,214,102,0.55)';
-	[[70, 80, 14], [118, 66, 9], [128, 112, 16], [82, 124, 10], [100, 98, 7]].forEach(([x, y, r]) => {
-		ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-	});
-	c.refresh();
+	makeClouds(scene);
 }
 
 function txt(scene, x, y, s, size, color, extra) {
@@ -337,11 +371,15 @@ class Boot extends Phaser.Scene {
 		Object.assign(PAL, EXTRA_PAL);
 		Object.assign(SPR, EXTRA_SPR);
 		Object.assign(VARIANTS, EXTRA_VAR);
-		Object.entries(SPR).forEach(([k, s]) => makeTex(this, k, s.rows, s.px, Object.assign({}, PAL, s.pal), s.shadow));
+		Object.entries(SPR).forEach(([k, s]) => makeTex(this, k, s.rows, s.px, Object.assign({}, PAL, s.pal), s.fine));
 		Object.entries(VARIANTS).forEach(([k, [base, pal]]) =>
 			makeTex(this, k, SPR[base].rows, SPR[base].px, Object.assign({}, PAL, SPR[base].pal, pal)));
 		makeBg(this);
-		makeShield(this);
+		makeDogTex(this, 'player', 1, false);      // 말티푸 영웅 (인게임)
+		makeDogTex(this, 'player_o', 1, true);     // 입 벌림 (폭탄 발사)
+		makeDogTex(this, 'player_big', 2, false);  // 타이틀용 2배 해상도
+		makeCapeShield(this); makeCapeIcon(this); makeEyeFlash(this); makeBomb(this); makeFlowers(this); makeShock(this);
+		['sb0', 'sb1_1', 'mb0', 'mb1', 'ub0'].forEach(k => makeSmall(this, k, k + '_s', 0.6)); // 타이틀 보스 미리보기
 		this.scene.start('Title');
 	}
 }
@@ -354,18 +392,18 @@ class Title extends Phaser.Scene {
 		this.clouds = this.add.tileSprite(0, 0, W, H, 'clouds').setOrigin(0);
 		txt(this, W / 2, 105, "Rosa's", 60, '#ff6b81');
 		txt(this, W / 2, 170, 'Shot', 60, '#7a4b6b');
-		const pl = this.add.image(W / 2, 290, 'player').setScale(2);
+		const pl = this.add.image(W / 2, 290, 'player_big');
 		this.tweens.add({ targets: pl, y: 275, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 		// 만날 보스 미리보기: 곤충(소) - 바다 생물(중) - UFO(최종)
 		['sb0', 'sb1_1', 'mb0', 'mb1', 'ub0'].forEach((k, i) => {
-			const e = this.add.image(60 + i * 90, 385, k).setScale(0.6);
+			const e = this.add.image(60 + i * 90, 385, k + '_s');
 			this.tweens.add({ targets: e, y: 395, duration: 700 + i * 120, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 		});
 		button(this, W / 2, 470, 260, 60, tr('easy'), 0xbff0d4, () => this.start('easy'));
 		button(this, W / 2, 543, 260, 60, tr('normal'), 0xfff3b0, () => this.start('normal'));
 		button(this, W / 2, 616, 260, 60, tr('hard'), 0xffc2d4, () => this.start('hard'));
 
-		// 조작 방식 선택 (◀ ▶ 로 5가지 중 고르기, 저장됨)
+		// 조작 방식 선택 (◀ ▶ 로 밀기/조이스틱 중 고르기, 저장됨)
 		txt(this, W / 2, 668, tr('control'), 16, '#9a7a8f');
 		this.padLabel = txt(this, W / 2, 698, '', 24, '#7a4b6b');
 		this.arrow(70, 698, -1);
@@ -399,13 +437,13 @@ class Title extends Phaser.Scene {
 				setLang(LANGS[(LANGS.indexOf(LANG) + dir + LANGS.length) % LANGS.length]);
 				this.scene.restart();
 			} else {
-				setPad(((PAD - 1 + dir + 5) % 5) + 1);
+				setPad(PAD === 1 ? 2 : 1);
 				this.refreshPad();
 			}
 		});
 	}
 	refreshPad() {
-		this.padLabel.setText((PAD || 1) + '/5  ' + tr('pad')[PAD || 1]);
+		this.padLabel.setText(PAD + '/2  ' + tr('pad')[PAD]);
 	}
 	update() { this.clouds.tilePositionY -= 0.5; }
 }
@@ -441,7 +479,8 @@ class Game extends Phaser.Scene {
 		this.items = this.physics.add.group();
 
 		// 플레이어: 판정은 중앙 작은 원(반지름 5)만
-		this.player = this.physics.add.image(W / 2, PAD ? PLAYER_Y : H - 120, 'player').setDepth(5);
+		this.player = this.physics.add.image(W / 2, PLAYER_Y, 'player').setDepth(5);
+		this.eyeSide = 0; // 한 발씩 번갈아 나가는 눈 (0 왼쪽, 1 오른쪽)
 		this.player.setCircle(5, this.player.width / 2 - 5, this.player.height / 2 - 5);
 
 		// UI
@@ -451,16 +490,16 @@ class Game extends Phaser.Scene {
 		this.powTxt = txt(this, 16, 62, '', 18).setOrigin(0, 0.5).setDepth(20);
 		this.bossBar = this.add.graphics().setDepth(20);
 		this.stageTxt = txt(this, W / 2, 28, this.stage + '/' + MAX_STAGE, 20).setDepth(20);
-		// 폭탄(장미) 버튼은 오른쪽 아래, 방패(달) 버튼은 왼쪽 아래 + 소리 버튼
+		// 폭탄(입에서 뱉는 장미 폭탄) 버튼은 오른쪽 아래, 망토 방패 버튼은 왼쪽 아래 + 소리 버튼
 		this.bombBtn = this.add.circle(W - 56, H - 56, 36, 0xffe3f0, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
 		this.bombBtn.on('pointerdown', () => this.useBomb());
-		this.add.image(W - 56, H - 62, 'rose').setDepth(21);
+		this.add.image(W - 56, H - 62, 'bomb').setDepth(21);
 		this.bombTxt = txt(this, W - 56, H - 30, '', 18).setDepth(21);
 		this.shieldBtn = this.add.circle(56, H - 56, 36, 0xfff6c8, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
 		this.shieldBtn.on('pointerdown', () => this.useShield());
-		this.add.image(56, H - 62, 'moon').setDepth(21);
+		this.add.image(56, H - 62, 'capeIcon').setDepth(21);
 		this.shieldTxt = txt(this, 56, H - 30, '', 18).setDepth(21);
-		this.shieldImg = this.add.image(0, 0, 'moonShield').setDepth(6).setVisible(false);
+		this.shieldImg = this.add.image(0, 0, 'capeShield').setDepth(6).setVisible(false);
 		soundBtn(this, W - 26, 64).setDepth(20);
 		this.refreshUI();
 
@@ -470,8 +509,10 @@ class Game extends Phaser.Scene {
 		this.input.addPointer(1); // 한 손가락으로 이동, 다른 손가락으로 폭탄 버튼
 		this.input.on('pointerdown', (p, over) => {
 			if (over.length || this.over) return; // 버튼 위에서 시작한 터치는 이동으로 쓰지 않는다
-			if (PAD && p.y < PAD_Y) return; // 패드 모드: 아래 패드에서 시작한 터치만 이동
+			if (p.y < PAD_Y) return; // 아래 패드에서 시작한 터치만 이동
 			this.dragS = { ptr: p, px: p.x, py: p.y, x: this.player.x, y: this.player.y };
+			// 조이스틱은 처음 터치한 곳에 중심을 놓는다 (패드 안, 모서리 버튼과 겹치지 않게)
+			this.joy = { x: Phaser.Math.Clamp(p.x, 90, W - 90), y: Phaser.Math.Clamp(p.y, PAD_Y + 60, H - 120) };
 			this.endTut();
 		});
 		this.input.on('pointerup', p => { if (this.dragS && this.dragS.ptr === p) this.dragS = null; });
@@ -479,7 +520,7 @@ class Game extends Phaser.Scene {
 		this.input.keyboard.on('keydown-B', () => this.useBomb());
 		this.input.keyboard.on('keydown-V', () => this.useShield());
 		this.input.keyboard.on('keydown-M', () => SFX.toggle());
-		if (PAD) this.setupPad();
+		this.setupPad();
 
 		// 자동 연사
 		this.time.addEvent({ delay: 170, loop: true, callback: () => { if (!this.over) this.fire(); } });
@@ -487,6 +528,7 @@ class Game extends Phaser.Scene {
 		// 충돌
 		this.physics.add.overlap(this.pBul, this.enemies, (b, e) => this.hitEnemy(b, e));
 		this.physics.add.overlap(this.player, this.eBul, (p, b) => { b.destroy(); this.hurt(); });
+		// 입장(enter) 중인 적도 맞출 수 있고 부딪히면 피해를 준다 (갤러그처럼). 'wait'는 아직 화면에 안 나온 적
 		this.physics.add.overlap(this.player, this.enemies, (p, e) => { if (e.mode !== 'wait') this.hurt(); });
 		this.physics.add.overlap(this.player, this.items, (p, i) => this.collect(i));
 
@@ -536,15 +578,25 @@ class Game extends Phaser.Scene {
 	}
 
 	// ----- 플레이어 -----
+	// 눈에서 레이저: 1단계는 왼쪽·오른쪽 눈이 번갈아, 2단계는 두 눈 동시, 3단계는 두 눈 + 이마 정면
 	fire() {
 		SFX.shoot();
-		const x = this.player.x, y = this.player.y - 30;
-		const shots = this.power === 1 ? [[0, 0]] : this.power === 2 ? [[-10, 0], [10, 0]] : [[-14, -80], [0, 0], [14, 80]];
-		shots.forEach(([dx, vx]) => {
-			const b = this.pBul.create(x + dx, y, Math.random() < 0.5 ? 'pbullet' : 'pbullet2').setDepth(4);
-			b.body.setSize(15, 15).setOffset(3, 0); // 판정은 머리 부분만 (꼬리 불꽃·그림자는 제외)
+		const p = this.player, ey = p.y - 8;
+		let shots;
+		if (this.power === 1) { this.eyeSide ^= 1; shots = [[this.eyeSide ? 7 : -7, 0, ey]]; }
+		else if (this.power === 2) shots = [[-7, 0, ey], [7, 0, ey]];
+		else shots = [[-7, -70, ey], [0, 0, ey - 6], [7, 70, ey]];
+		shots.forEach(([dx, vx, y]) => {
+			const b = this.pBul.create(p.x + dx, y, Math.random() < 0.5 ? 'pbullet' : 'pbullet2').setDepth(4);
+			b.body.setSize(7, 12).setOffset(2, 0); // 판정은 레이저 머리 부분만
 			b.body.setVelocity(vx, -620);
+			if (dx !== 0 || this.power < 3) this.eyeGlint(p.x + dx, ey + 1);
 		});
+	}
+	// 눈에서 번쩍 (쏠 때마다 잠깐)
+	eyeGlint(x, y) {
+		const f = this.add.image(x, y, 'eyeflash').setDepth(6).setScale(0.6);
+		this.tweens.add({ targets: f, scale: 1.1, alpha: 0, duration: 120, onComplete: () => f.destroy() });
 	}
 	hurt() {
 		if (this.over || this.god || this.time.now < this.invuln || this.time.now < this.shieldUntil) return;
@@ -572,7 +624,7 @@ class Game extends Phaser.Scene {
 	moveBez(e, p0, p1, p2, dur, delay, ease, done) {
 		e.tw = this.tweens.addCounter({
 			from: 0, to: 1, duration: dur, delay: delay || 0, ease: ease || 'Linear',
-			onStart: () => { if (e.active) { e.setVisible(true); e.body.enable = true; } },
+			onStart: () => { if (e.active) { e.setVisible(true); e.body.enable = true; if (e.mode === 'wait') e.mode = 'enter'; } },
 			onUpdate: tw => {
 				if (!e.active) return;
 				const v = tw.getValue();
@@ -595,7 +647,7 @@ class Game extends Phaser.Scene {
 	toHold(e) {
 		e.mode = 'hold';
 		e.nextFire = this.time.now + Phaser.Math.Between(1500, 3500) * this.df.fire;
-		e.diveAt = this.time.now + Phaser.Math.Between(4000, 9000);
+		e.diveAt = this.time.now + Phaser.Math.Between(4000, 9000) / HARD_K;
 	}
 	dive(e) {
 		e.mode = 'dive';
@@ -747,12 +799,12 @@ class Game extends Phaser.Scene {
 		this.refreshUI();
 	}
 	drop(x, y, kind) {
-		const it = this.items.create(x, y, ITEM_TEX[kind]).setDepth(5).setScale(1.5);
+		const it = this.items.create(x, y, ITEM_TEX[kind]).setDepth(5);
 		it.kind = kind;
 		it.body.setVelocity(0, 110);
 		// 적과 구분되도록: 종류별 색 후광(두근두근 커졌다 작아짐) + 좌우 살랑살랑
 		const col = { heart: 0xff9fb5, star: 0xffe066, bomb: 0xff6b81, shield: 0x9fd8ff }[kind];
-		const halo = this.add.circle(x, y, 30, 0xffffff, 0.55).setStrokeStyle(4, col).setDepth(4);
+		const halo = this.add.circle(x, y, 32, 0xffffff, 0.55).setStrokeStyle(4, col).setDepth(4);
 		this.tweens.add({ targets: halo, scale: 1.3, alpha: 0.25, duration: 450, yoyo: true, repeat: -1 });
 		this.tweens.add({ targets: it, angle: { from: -12, to: 12 }, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 		it.halo = halo;
@@ -760,7 +812,8 @@ class Game extends Phaser.Scene {
 	}
 
 	// ----- 폭탄 -----
-	// 화면의 적 탄을 모두 지우고, 일반 적은 한 방에 처치, 보스에게는 8 피해. 잠깐 무적.
+	// 말티푸가 입으로 장미 폭탄을 뱉는다. 폭탄이 날아가 터지면 화면의 적 탄을 모두 지우고,
+	// 일반 적은 한 방에 처치, 보스에게는 8 피해. 뱉는 순간부터 잠깐 무적.
 	useBomb() {
 		if (this.over || this.time.now < this.bombCd) return;
 		if (this.bombs <= 0) { SFX.empty(); return; }
@@ -768,8 +821,20 @@ class Game extends Phaser.Scene {
 		this.bombCd = this.time.now + 700;
 		this.invuln = Math.max(this.invuln, this.time.now + 1500);
 		SFX.bomb();
+		const p = this.player, tx = p.x, ty = Math.max(160, p.y - 300);
+		p.setTexture('player_o');
+		this.time.delayedCall(350, () => { if (p.active) p.setTexture('player'); });
+		const b = this.add.image(p.x, p.y + 6, 'bomb').setDepth(7).setScale(0.4);
+		this.tweens.add({ targets: b, scale: 1.2, angle: 540, duration: 520, ease: 'Sine.easeOut' });
+		this.tweens.add({
+			targets: b, x: tx, y: ty, duration: 520, ease: 'Cubic.easeOut',
+			onComplete: () => { b.destroy(); if (!this.over) this.detonate(tx, ty); }
+		});
+		this.refreshUI();
+	}
+	detonate(x, y) {
 		this.cameras.main.flash(250, 255, 225, 240);
-		this.roseBloom(this.player.x, this.player.y);
+		this.roseBloom(x, y);
 		this.eBul.clear(true, true);
 		this.enemies.getChildren().slice().forEach(e => {
 			if (!e.active || e.mode === 'wait' || e.mode === 'boss_in') return;
@@ -778,32 +843,33 @@ class Game extends Phaser.Scene {
 		this.refreshUI();
 	}
 
-	// 장미꽃이 활짝 피며 터지는 폭탄 연출: 큰 장미 + 작은 장미들이 사방으로 + 꽃잎 비
+	// 장미꽃이 활짝 피며 터지는 폭탄 연출: 퍼지는 분홍 파동 + 작은 장미들이 사방으로 + 꽃잎 비
 	roseBloom(x, y) {
-		const big = this.add.image(x, y, 'rose').setDepth(25).setScale(1).setAlpha(0.9);
-		this.tweens.add({ targets: big, scale: 24, angle: 70, alpha: 0, duration: 900, ease: 'Cubic.easeOut', onComplete: () => big.destroy() });
+		const ring = this.add.image(x, y, 'shock').setDepth(25).setScale(0.3);
+		this.tweens.add({ targets: ring, scale: 4.2, alpha: 0, duration: 800, ease: 'Cubic.easeOut', onComplete: () => ring.destroy() });
 		for (let i = 0; i < 12; i++) {
-			const a = i * Math.PI / 6, r = this.add.image(x, y, 'rose').setDepth(26).setScale(1.2);
+			const a = i * Math.PI / 6, r = this.add.image(x, y, 'rose').setDepth(26).setScale(0.7);
 			this.tweens.add({
-				targets: r, x: x + Math.cos(a) * 340, y: y + Math.sin(a) * 340, angle: 360, scale: 2.4, alpha: 0,
+				targets: r, x: x + Math.cos(a) * 340, y: y + Math.sin(a) * 340, angle: 360, scale: 1.3, alpha: 0,
 				duration: 800, ease: 'Cubic.easeOut', onComplete: () => r.destroy()
 			});
 		}
 		const em = this.add.particles(x, y, 'petal', {
-			speed: { min: 80, max: 420 }, lifespan: 1200, scale: { start: 1.6, end: 0.4 }, alpha: { start: 1, end: 0 },
+			speed: { min: 80, max: 420 }, lifespan: 1200, scale: { start: 1.4, end: 0.4 }, alpha: { start: 1, end: 0 },
 			rotate: { min: 0, max: 360 }, gravityY: 120, tint: [0xff9fb5, 0xff6b81, 0xffc2d4], emitting: false
 		}).setDepth(27);
 		em.explode(60);
 		this.time.delayedCall(1400, () => em.destroy());
 	}
 
-	// ----- 달 방패 -----
-	// 6초 동안 커다란 보름달이 감싸 탄을 모두 막고, 닿는 적에게 피해를 준다
+	// ----- 망토 방패 -----
+	// 6초 동안 망토가 활짝 펼쳐져 감싸며 탄을 모두 막고, 닿는 적에게 피해를 준다
 	useShield() {
 		if (this.over || this.time.now < this.shieldUntil) return;
 		if (this.shields <= 0) { SFX.empty(); return; }
 		this.shields--;
 		this.shieldTotal = 6000;
+		this.shieldStart = this.time.now;
 		this.shieldUntil = this.time.now + this.shieldTotal;
 		SFX.shield();
 		this.cameras.main.flash(200, 255, 248, 210);
@@ -814,7 +880,8 @@ class Game extends Phaser.Scene {
 		this.shieldImg.setVisible(on);
 		if (!on) return;
 		const left = this.shieldUntil - time;
-		this.shieldImg.setPosition(p.x, p.y).setScale(1 + Math.sin(time / 180) * 0.04)
+		const open = Math.min(1, (time - this.shieldStart) / 220); // 망토가 펼쳐지는 동안 점점 커진다
+		this.shieldImg.setPosition(p.x, p.y).setScale((0.3 + 0.7 * open) * (1 + Math.sin(time / 180) * 0.04))
 			.setAlpha(left < 1500 ? (Math.floor(time / 90) % 2 ? 0.35 : 1) : 1); // 끝나갈 땐 깜빡
 		const R = 92;
 		this.eBul.children.each(b => { if (b.active && Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y) < R) b.destroy(); });
@@ -864,36 +931,28 @@ class Game extends Phaser.Scene {
 		if (win) this.burst(W / 2, 200, 60);
 	}
 
-	// ----- 하단 터치 패드 (좌우 이동 전용) -----
+	// ----- 하단 터치 패드: 1 밀기(좌우), 2 조이스틱(전후좌우) -----
 	setupPad() {
-		const T = [null, [0xffd6e7, 0xff9fb5], [0xd6ecff, 0x9fd8ff], [0xe6dcff, 0xb69cff], [0xd8f5e4, 0x8fdcb0], [0xfff3b0, 0xffd25a]][PAD];
-		const fill = T[0], line = T[1], h = H - PAD_Y - 8;
+		const fill = PAD === 1 ? 0xffd6e7 : 0xd6ecff, line = PAD === 1 ? 0xff9fb5 : 0x9fd8ff, h = H - PAD_Y - 8;
 		const g = this.add.graphics().setDepth(15);
 		g.fillStyle(fill, 0.6).fillRoundedRect(8, PAD_Y, W - 16, h, 26);
 		g.lineStyle(4, line, 1).strokeRoundedRect(8, PAD_Y, W - 16, h, 26);
 		const cy = PAD_Y + h / 2 + 4;
-		if (PAD <= 3) { // 홈(레일)
+		this.padLine = line;
+		if (PAD === 1) { // 밀기: 좌우 홈(레일)
 			g.lineStyle(8, line, 0.8).lineBetween(60, cy, W - 60, cy);
 			g.fillStyle(line, 0.8).fillCircle(60, cy, 8).fillCircle(W - 60, cy, 8);
+		} else {         // 조이스틱: 받침과 손잡이는 매 프레임 그린다
+			this.joyG = this.add.graphics().setDepth(16);
+			this.joy = { x: W / 2, y: cy };
 		}
-		if (PAD === 4) { // 눈금
-			g.lineStyle(3, line, 0.9);
-			for (let x = 40; x <= W - 40; x += 40) g.lineBetween(x, cy - 10, x, cy + 10);
-		}
-		if (PAD === 3) g.lineStyle(4, line, 1).lineBetween(W / 2, cy - 16, W / 2, cy + 16);
-		if (PAD === 5) { // 왼쪽/오른쪽 버튼
-			g.lineStyle(4, line, 0.9).lineBetween(W / 2, PAD_Y + 14, W / 2, H - 22);
-			txt(this, W / 4, cy, '◀', 44, '#7a4b6b').setDepth(16).setAlpha(0.6);
-			txt(this, W * 3 / 4 - 40, cy, '▶', 44, '#7a4b6b').setDepth(16).setAlpha(0.6);
-			this.hl = this.add.graphics().setDepth(15);
-		}
-		if (PAD === 2 || PAD === 3) this.knob = this.add.circle(W / 2, cy, 20, line, 1).setStrokeStyle(4, 0x7a4b6b).setDepth(16);
 		this.padCy = cy;
 
 		// 손가락 안내: 처음엔 좌우로 왔다갔다, 이후엔 터치를 따라다닌다
 		this.finger = this.add.image(W / 2, cy, 'finger').setOrigin(0.4, 0.05).setDepth(22);
 		this.tut = true;
-		this.fingerTween = this.tweens.add({ targets: this.finger, x: { from: 110, to: W - 110 }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+		const span = PAD === 1 ? 110 : 40;
+		this.fingerTween = this.tweens.add({ targets: this.finger, x: { from: W / 2 - span - (PAD === 1 ? 0 : 0), to: W / 2 + span }, duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 		this.tutTxt = [txt(this, W / 2, PAD_Y - 26, tr('hint')[PAD], 20, '#7a4b6b').setDepth(22)];
 		this.time.delayedCall(8000, () => this.endTut());
 		if (this.carry) this.endTut(); // 2맵부터는 안내 생략 (터치하면 손가락은 계속 따라다님)
@@ -907,14 +966,14 @@ class Game extends Phaser.Scene {
 		this.tutTxt.forEach(t => this.tweens.add({ targets: t, alpha: 0, duration: 300, onComplete: () => t.destroy() }));
 	}
 
-	// 스타일별 이동 방식: 1 밀기(1:1) / 2 손가락 위치로 / 3 밀면 계속 / 4 밀기(1.8배) / 5 좌우 누르기
-	padMove(ds, x) {
-		const px = ds.ptr.x;
-		if (PAD === 1) return x + (ds.x + px - ds.px - x) * 0.4;
-		if (PAD === 2) return x + (px - x) * 0.35;
-		if (PAD === 3) { const d = px - ds.px; return x + (Math.abs(d) < 8 ? 0 : Phaser.Math.Clamp(d / 60, -1, 1) * 8); }
-		if (PAD === 4) return x + (ds.x + (px - ds.px) * 1.8 - x) * 0.4;
-		return x + (px < W / 2 ? -7 : 7);
+	// 조이스틱 입력: 받침 중심에서 손가락까지의 거리(최대 JOY_R)가 곧 속도
+	joyVec(ds) {
+		if (!ds || !ds.ptr.isDown) return { x: 0, y: 0, kx: 0, ky: 0 };
+		let dx = ds.ptr.x - this.joy.x, dy = ds.ptr.y - this.joy.y;
+		const len = Math.hypot(dx, dy);
+		if (len > JOY_R) { dx = dx / len * JOY_R; dy = dy / len * JOY_R; }
+		const dead = (v) => Math.abs(v) < 8 ? 0 : v / JOY_R; // 살짝 닿은 정도는 무시
+		return { x: dead(dx), y: dead(dy), kx: dx, ky: dy };
 	}
 
 	padUpdate() {
@@ -924,39 +983,40 @@ class Game extends Phaser.Scene {
 			if (down) { f.x = Phaser.Math.Clamp(ds.ptr.x, 16, W - 16); f.y = Phaser.Math.Clamp(ds.ptr.y, PAD_Y + 8, H - 40); }
 			f.setAlpha(f.alpha + ((down ? 1 : 0) - f.alpha) * 0.3).setScale(down ? 0.9 : 1);
 		}
-		if (this.knob) {
-			this.knob.x = PAD === 2 ? Phaser.Math.Clamp(this.player.x, 60, W - 60)
-				: W / 2 + (down ? Phaser.Math.Clamp(ds.ptr.x - ds.px, -150, 150) : 0);
-		}
-		if (this.hl) {
-			this.hl.clear().fillStyle(0xffffff, 0.45);
-			if (down) this.hl.fillRoundedRect(ds.ptr.x < W / 2 ? 12 : W / 2 + 2, PAD_Y + 4, W / 2 - 14, H - PAD_Y - 16, 22);
+		if (this.joyG) {
+			if (!down) this.joy = { x: W / 2, y: this.padCy }; // 손을 떼면 받침이 가운데로 돌아온다
+			const v = this.joyVec(ds), j = this.joy, a = down ? 0.85 : 0.45;
+			this.joyG.clear();
+			this.joyG.fillStyle(0xffffff, 0.35 * (down ? 1.4 : 1)).fillCircle(j.x, j.y, JOY_R + 10);
+			this.joyG.lineStyle(4, this.padLine, a).strokeCircle(j.x, j.y, JOY_R + 10);
+			this.joyG.fillStyle(this.padLine, a).fillCircle(j.x + v.kx, j.y + v.ky, 24);
+			this.joyG.lineStyle(4, 0x7a4b6b, a).strokeCircle(j.x + v.kx, j.y + v.ky, 24);
 		}
 	}
 
 	// ----- 매 프레임 -----
-	update(time) {
+	update(time, delta) {
 		this.cl1.tilePositionY -= 0.6;
 		this.cl2.tilePositionY -= 1.4;
 		if (this.over) return;
 		const p = this.player;
 
-		// 이동: 드래그(상대 이동) 또는 키보드
-		const ds = this.dragS;
-		if (PAD && ds && ds.ptr.isDown) {
-			p.x = this.padMove(ds, p.x);
-		} else if (ds && ds.ptr.isDown) {
-			p.x += (ds.x + ds.ptr.x - ds.px - p.x) * 0.4;
-			p.y += (ds.y + ds.ptr.y - ds.py - p.y) * 0.4;
+		// 이동: 밀기(좌우) / 조이스틱(전후좌우) 또는 키보드
+		const ds = this.dragS, k = this.cur, w = this.wasd, dt = delta / 1000;
+		const kx = (k.right.isDown || w.D.isDown ? 1 : 0) - (k.left.isDown || w.A.isDown ? 1 : 0);
+		const ky = (k.down.isDown || w.S.isDown ? 1 : 0) - (k.up.isDown || w.W.isDown ? 1 : 0);
+		if (PAD === 1) {
+			if (ds && ds.ptr.isDown) p.x += (ds.x + ds.ptr.x - ds.px - p.x) * 0.4; // 손가락이 민 만큼 1:1
+			else p.x += kx * 5;
+			p.y = PLAYER_Y;
 		} else {
-			const k = this.cur, w = this.wasd;
-			const vx = (k.right.isDown || w.D.isDown ? 1 : 0) - (k.left.isDown || w.A.isDown ? 1 : 0);
-			const vy = (k.down.isDown || w.S.isDown ? 1 : 0) - (k.up.isDown || w.W.isDown ? 1 : 0);
-			p.x += vx * 5; if (!PAD) p.y += vy * 5;
+			const v = this.joyVec(ds);
+			p.x += (v.x || kx) * JOY_SPEED * dt;
+			p.y += (v.y || ky) * JOY_SPEED * dt;
+			p.y = Phaser.Math.Clamp(p.y, 200, PAD_Y - 40);
 		}
-		if (PAD) { p.y = PLAYER_Y; this.padUpdate(); }
+		this.padUpdate();
 		p.x = Phaser.Math.Clamp(p.x, 24, W - 24);
-		p.y = Phaser.Math.Clamp(p.y, 90, H - 30);
 		p.setAlpha(time < this.invuln && Math.floor(time / 80) % 2 ? 0.3 : 1);
 
 		// 적 행동
