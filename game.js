@@ -300,7 +300,8 @@ const SFX = (() => {
 		g.gain.setValueAtTime(0.0001, t);
 		g.gain.exponentialRampToValueAtTime(o.vol || 0.2, t + 0.012);
 		g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-		osc.connect(g); g.connect(master);
+		if (o.lp) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = o.lp; osc.connect(f); f.connect(g); } else osc.connect(g);
+		g.connect(master);
 		osc.start(t); osc.stop(t + dur + 0.03);
 	}
 	// 음 여러 개를 차례로 (짧은 멜로디)
@@ -351,9 +352,16 @@ const SFX = (() => {
 			tone(150, 0.4, { vol: 0.28, slide: 0.4, delay: 0.1 });
 			sweep(0.55, 0.18);
 		},
-		shield: () => {                                                                                  // 포근한 달빛 (방패 켜기)
-			notes([392, 523, 659, 784], 0.07, 0.3, { vol: 0.14 });
-			tone(196, 0.5, { type: 'triangle', vol: 0.12, delay: 0.05 });
+		// 우산 방패: 개는 "멍멍", 고양이는 "야옹" + 반짝 효과음
+		shield: who => {
+			if (who === 'cat') {
+				tone(560, 0.22, { type: 'sawtooth', vol: 0.15, slide: 1.7, lp: 2400 });
+				tone(950, 0.34, { type: 'sawtooth', vol: 0.15, slide: 0.55, lp: 2400, delay: 0.2 });
+			} else {
+				tone(430, 0.12, { type: 'sawtooth', vol: 0.24, slide: 0.5, lp: 1500 });
+				tone(380, 0.14, { type: 'sawtooth', vol: 0.24, slide: 0.45, lp: 1500, delay: 0.19 });
+			}
+			notes([1047, 1568], 0.08, 0.16, { vol: 0.1, delay: 0.3 });
 		},
 		empty: () => tone(220, 0.1, { type: 'triangle', vol: 0.12, slide: 0.7 }),                       // 폭탄 없음
 		wave: () => notes([880, 1175], 0.09, 0.12, { type: 'triangle', vol: 0.12 }),
@@ -387,10 +395,8 @@ class Boot extends Phaser.Scene {
 		Object.entries(VARIANTS).forEach(([k, [base, pal]]) =>
 			makeTex(this, k, SPR[base].rows, SPR[base].px, Object.assign({}, PAL, SPR[base].pal, pal)));
 		makeBg(this);
-		[['dog', drawDog], ['cat', drawCat]].forEach(([k, fn]) => {   // 영웅 2종: 인게임 / 입 벌림(폭탄) / 타이틀용 2배 해상도
-			makeCharTex(this, k, 1, false, fn); makeCharTex(this, k + '_o', 1, true, fn); makeCharTex(this, k + '_big', 2, false, fn);
-		});
-		makeCapeShield(this); makeCapeIcon(this); makeEyeFlash(this); makeBomb(this); makeFlowers(this); makeShock(this);
+		makeCharSet(this, 'dog', drawDog); makeCharSet(this, 'cat', drawCat);   // 영웅 2종 (포즈별 그림)
+		makeUmbrellaOverlay(this); makeBomb(this); makeFlowers(this); makeShock(this);
 		makeEnemyBullet(this); makeWeaponShots(this); makeItems(this);
 		['sb0', 'sb1_1', 'mb0', 'mb1', 'ub0'].forEach(k => makeSmall(this, k, k + '_s', 0.6)); // 타이틀 보스 미리보기
 		this.scene.start('Title');
@@ -412,6 +418,7 @@ class Title extends Phaser.Scene {
 			const x = 140 + i * 200, y = 340;
 			const card = this.add.rectangle(x, y, 176, 190, 0xffffff, 0.6).setStrokeStyle(4, 0xc9a3bd).setInteractive({ useHandCursor: true });
 			const im = this.add.image(x, y - 14, k + '_big');
+			this.time.addEvent({ delay: 200, loop: true, callback: () => { im.setTexture(k + '_big' + ['A', '', 'B', ''][Math.floor(this.time.now / 200) % 4]); } });
 			const nm = txt(this, x, y + 74, tr(k), 22);
 			card.on('pointerdown', () => { SFX.click(); setChar(k); this.refreshChar(); });
 			this.tweens.add({ targets: im, y: y - 24, duration: 900 + i * 140, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
@@ -509,7 +516,7 @@ class Game extends Phaser.Scene {
 		const pw = PARAMS.get('w');
 		this.wtype = c.wtype || (WEAPONS.includes(pw) ? pw : 'bullet');
 		this.wlevel = c.wlevel || Math.min(W_MAX, Math.max(1, Number(PARAMS.get('lv')) || 1));
-		this.fireTick = 0;
+		this.fireTick = 0; this.fireT = -1e9; this.mouthUntil = 0;
 		this.bombs = c.bombs !== undefined ? c.bombs : this.df.bomb; this.bombCd = 0;
 		this.shields = c.shields !== undefined ? c.shields : this.df.shield; this.shieldUntil = 0; this.shieldTotal = 0;
 		this.over = false; this.boss = null; this.bossCalled = false; this.wavesSpawned = 0;
@@ -544,9 +551,9 @@ class Game extends Phaser.Scene {
 		this.bombTxt = txt(this, bp.x, bp.y + 26, '', 18).setDepth(21);
 		this.shieldBtn = this.add.circle(sp.x, sp.y, 36, 0xfff6c8, 0.9).setStrokeStyle(4, 0x7a4b6b).setDepth(20).setInteractive({ useHandCursor: true });
 		this.shieldBtn.on('pointerdown', () => this.useShield());
-		this.add.image(sp.x, sp.y - 6, 'capeIcon').setDepth(21);
+		this.add.image(sp.x, sp.y - 4, 'umbrella').setScale(0.85).setDepth(21);
 		this.shieldTxt = txt(this, sp.x, sp.y + 26, '', 18).setDepth(21);
-		this.shieldImg = this.add.image(0, 0, 'capeShield').setDepth(6).setVisible(false);
+		this.shieldImg = this.add.image(0, 0, 'um0').setOrigin(0.5, 80 / 112).setDepth(4).setVisible(false); // 우산 방패(캐릭터 뒤)
 		soundBtn(this, W - 26, 64).setDepth(20);
 		this.refreshUI();
 
@@ -648,6 +655,7 @@ class Game extends Phaser.Scene {
 			for (let i = 0; i < n; i++) shots.push({ dx: (i - (n - 1) / 2) * 11, vx: (i - (n - 1) / 2) * 80, vy: -420, key: 'pmis', dmg, homing: true, k: i });
 		}
 		SFX.shoot();
+		this.fireT = this.time.now;
 		shots.forEach(sh => {
 			const b = this.pBul.create(p.x + 12 + sh.dx * 0.55, sh.homing ? p.y - 2 : ey, sh.key).setDepth(4);
 			b.dmg = sh.dmg; b.pierce = !!sh.pierce; b.homing = !!sh.homing; b.k = sh.k || 0;
@@ -656,7 +664,6 @@ class Game extends Phaser.Scene {
 			else b.body.setSize(7, 12).setOffset(2, 0); // 레이저 판정은 머리 부분만
 			b.body.setVelocity(sh.vx, sh.vy);
 		});
-		this.eyeGlint(p.x + 12, ey - 2); // 총구 번쩍
 	}
 	// 유도탄: 가장 가까운 적부터 차례로 하나씩 맡아 따라간다
 	homing(dt) {
@@ -673,10 +680,18 @@ class Game extends Phaser.Scene {
 			b.rotation = ang + Math.PI / 2;
 		});
 	}
-	// 눈에서 번쩍 (쏠 때마다 잠깐)
-	eyeGlint(x, y) {
-		const f = this.add.image(x, y, 'eyeflash').setDepth(6).setScale(0.6).setTint({ bullet: 0xffe066, laser: 0xffffff, missile: 0xff8a9a }[this.wtype]);
-		this.tweens.add({ targets: f, scale: 1.1, alpha: 0, duration: 120, onComplete: () => f.destroy() });
+	// 캐릭터 그림 고르기: 우산 들기 > 폭탄 뱉기 > 발사 모션(발사 → 반동 → 조준) > 꼬리 살랑 대기
+	animChar(time) {
+		const p = this.player;
+		let k = CHAR;
+		if (time < this.shieldUntil) k += '_p';
+		else if (time < this.mouthUntil) k += '_o';
+		else {
+			const d = time - this.fireT;
+			if (d < 70) k += '_fire'; else if (d < 150) k += '_rec'; else if (d < 300) k += '_aim';
+			else k += ['_a', '', '_b', ''][Math.floor(time / 180) % 4];
+		}
+		if (p.texture.key !== k) p.setTexture(k);
 	}
 	hurt() {
 		if (this.over || this.god || this.time.now < this.invuln || this.time.now < this.shieldUntil) return;
@@ -919,8 +934,7 @@ class Game extends Phaser.Scene {
 		this.invuln = Math.max(this.invuln, this.time.now + 1500);
 		SFX.bomb();
 		const p = this.player, tx = p.x, ty = Math.max(160, p.y - 300);
-		p.setTexture(CHAR + '_o');
-		this.time.delayedCall(350, () => { if (p.active) p.setTexture(CHAR); });
+		this.mouthUntil = this.time.now + 350; // 입을 벌려 폭탄을 뱉는 모습
 		const b = this.add.image(p.x, p.y + 6, 'bomb').setDepth(7).setScale(0.4);
 		this.tweens.add({ targets: b, scale: 1.2, angle: 540, duration: 520, ease: 'Sine.easeOut' });
 		this.tweens.add({
@@ -959,8 +973,8 @@ class Game extends Phaser.Scene {
 		this.time.delayedCall(1400, () => em.destroy());
 	}
 
-	// ----- 망토 방패 -----
-	// 6초 동안 망토가 활짝 펼쳐져 감싸며 탄을 모두 막고, 닿는 적에게 피해를 준다
+	// ----- 우산 방패 -----
+	// 6초 동안 우산이 머리 위로 똑바로 펼쳐져 탄을 모두 막고, 닿는 적에게 피해를 준다
 	useShield() {
 		if (this.over || this.time.now < this.shieldUntil) return;
 		if (this.shields <= 0) { SFX.empty(); return; }
@@ -968,7 +982,7 @@ class Game extends Phaser.Scene {
 		this.shieldTotal = 6000;
 		this.shieldStart = this.time.now;
 		this.shieldUntil = this.time.now + this.shieldTotal;
-		SFX.shield();
+		SFX.shield(CHAR);
 		this.cameras.main.flash(200, 255, 248, 210);
 		this.refreshUI();
 	}
@@ -977,14 +991,13 @@ class Game extends Phaser.Scene {
 		this.shieldImg.setVisible(on);
 		if (!on) return;
 		const left = this.shieldUntil - time;
-		const open = Math.min(1, (time - this.shieldStart) / 220); // 망토가 펼쳐지는 동안 점점 커진다
-		this.shieldImg.setPosition(p.x, p.y).setScale((0.3 + 0.7 * open) * (1 + Math.sin(time / 180) * 0.04))
+		this.shieldImg.setTexture('um' + Math.min(3, Math.floor((time - this.shieldStart) / 90))).setPosition(p.x, p.y)
 			.setAlpha(left < 1500 ? (Math.floor(time / 90) % 2 ? 0.35 : 1) : 1); // 끝나갈 땐 깜빡
-		const R = 92;
-		this.eBul.children.each(b => { if (b.active && Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y) < R) b.destroy(); });
+		const cx = p.x, cy = p.y - 18, R = 64; // 우산 아래 보호 범위
+		this.eBul.children.each(b => { if (b.active && Phaser.Math.Distance.Between(b.x, b.y, cx, cy) < R) b.destroy(); });
 		this.enemies.children.each(e => {
 			if (!e.active || e.mode === 'wait' || e.mode === 'boss_in') return;
-			if (Phaser.Math.Distance.Between(e.x, e.y, p.x, p.y) < R + e.displayWidth * 0.3 && time > (e.shAt || 0)) {
+			if (Phaser.Math.Distance.Between(e.x, e.y, cx, cy) < R + e.displayWidth * 0.3 && time > (e.shAt || 0)) {
 				e.shAt = time + 300;
 				this.damage(e, e.isBoss ? 1 : 99);
 			}
@@ -1117,6 +1130,7 @@ class Game extends Phaser.Scene {
 		}
 		this.padUpdate();
 		this.homing(dt);
+		this.animChar(time);
 		p.x = Phaser.Math.Clamp(p.x, 24, W - 24);
 		p.setAlpha(time < this.invuln && Math.floor(time / 80) % 2 ? 0.3 : 1);
 
