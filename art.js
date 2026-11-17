@@ -54,8 +54,7 @@ function ell(ctx, x, y, rx, ry, fill, rot, stroke, lw) {
 }
 
 // 흰 말티푸 영웅: 망토를 두르고 정면을 보며 날아오른다. open=true 면 입을 벌려 폭탄을 뱉는 모습
-function drawDog(ctx, open) {
-	const FUR = '#fffdfa', FURS = '#e7dbe6', EAR = '#fbf1e4', EARS = '#e6d3c8', LINE = '#a98aa6';
+function drawCape(ctx) {
 	// 1. 망토 (뒤로 펄럭이며 늘어짐)
 	const cape = () => {
 		ctx.beginPath();
@@ -75,6 +74,12 @@ function drawDog(ctx, open) {
 	ctx.strokeStyle = '#ffd24d'; ctx.lineWidth = 1.1; // 금빛 단
 	ctx.beginPath(); ctx.moveTo(5.5, 60); ctx.quadraticCurveTo(9, 63.6, 14, 59.2); ctx.quadraticCurveTo(19, 64, 24, 59.8);
 	ctx.quadraticCurveTo(28, 64, 32, 60.2); ctx.quadraticCurveTo(36, 64, 40, 59.8); ctx.quadraticCurveTo(45, 64, 50, 59.2); ctx.quadraticCurveTo(55, 63.6, 58.6, 60); ctx.stroke();
+}
+
+// 흰 말티푸 영웅
+function drawDog(ctx, open) {
+	const FUR = '#fffdfa', FURS = '#e7dbe6', EAR = '#fbf1e4', EARS = '#e6d3c8', LINE = '#a98aa6';
+	drawCape(ctx);
 
 	// 2. 몸통과 앞발
 	fluff(ctx, furPath(ctx, 32, 46, 9.5, 7, 3.2, 0.2, Math.PI - 0.2, 0.92), FUR, FURS);
@@ -116,16 +121,83 @@ function drawDog(ctx, open) {
 		ell(ctx, 32, 37.2, 1.7, 1.6, '#ff8fa5');
 	}
 	// 7. 목 매듭(금 단추)과 끈
+	drawKnot(ctx);
+}
+function drawKnot(ctx) {
 	ctx.strokeStyle = '#d6385f'; ctx.lineWidth = 1.6;
 	ctx.beginPath(); ctx.moveTo(23, 38.5); ctx.quadraticCurveTo(28, 43, 32, 41.5); ctx.quadraticCurveTo(36, 43, 41, 38.5); ctx.stroke();
 	ell(ctx, 32, 41.5, 2.9, 2.9, '#ffd24d', 0, '#c98a12', 0.8); ell(ctx, 31.2, 40.6, 0.9, 0.9, '#fff6c8');
 }
 
-function makeDogTex(scene, key, S, open) {
+// 샴고양이 영웅: 크림색 몸, 진한 갈색 마스크·귀·꼬리·발, 파란 눈
+function drawCat(ctx, open) {
+	const CR = '#f7ecdb', CRS = '#dcc6aa', DK = '#5a403a', DKS = '#3f2b27', DKH = '#76564d';
+	drawCape(ctx);
+	// 꼬리: 망토 옆으로 살짝 말려 올라간 갈색 꼬리
+	ctx.strokeStyle = DKS; ctx.lineWidth = 5.4; ctx.lineCap = 'round';
+	ctx.beginPath(); ctx.moveTo(44, 58); ctx.bezierCurveTo(56, 59, 60, 50, 55, 43); ctx.stroke();
+	ctx.strokeStyle = DK; ctx.lineWidth = 3.6;
+	ctx.beginPath(); ctx.moveTo(44, 58); ctx.bezierCurveTo(56, 59, 60, 50, 55, 43); ctx.stroke();
+	ctx.lineCap = 'butt';
+	// 몸통과 앞발(발끝은 갈색)
+	fluff(ctx, () => { ctx.beginPath(); ctx.ellipse(32, 46.5, 10, 10, 0, 0, Math.PI * 2); }, CR, CRS);
+	ell(ctx, 23.5, 53, 3.7, 4.6, CR, 0.25); ell(ctx, 40.5, 53, 3.7, 4.6, CR, -0.25);
+	ell(ctx, 23.2, 55, 3.7, 3, DK, 0.2); ell(ctx, 40.8, 55, 3.7, 3, DK, -0.2);
+	ell(ctx, 23.2, 55.8, 1.3, 1, '#e8a9a6'); ell(ctx, 40.8, 55.8, 1.3, 1, '#e8a9a6');
+	// 귀: 쫑긋 선 갈색 귀 + 분홍 안쪽
+	[-1, 1].forEach(sd => {
+		const X = x => 32 + sd * x;
+		ctx.fillStyle = DK; ctx.beginPath(); ctx.moveTo(X(4.5), 14); ctx.lineTo(X(14.5), 0.8); ctx.lineTo(X(18.5), 22); ctx.closePath(); ctx.fill();
+		ctx.fillStyle = DKH; ctx.beginPath(); ctx.moveTo(X(7), 13); ctx.lineTo(X(14.3), 3.6); ctx.lineTo(X(16.6), 17); ctx.closePath(); ctx.fill();
+		ctx.fillStyle = '#e9a7a5'; ctx.beginPath(); ctx.moveTo(X(9.2), 13.4); ctx.lineTo(X(14.1), 6.6); ctx.lineTo(X(15.4), 16); ctx.closePath(); ctx.fill();
+	});
+	// 머리: 폭신하고 둥근 얼굴 (볼 털 포함)
+	fluff(ctx, () => {
+		ctx.beginPath(); ctx.ellipse(32, 25, 15.6, 13.2, 0, 0, Math.PI * 2);
+		ctx.moveTo(17.5, 30); ctx.arc(16.5, 30, 3.2, 0, Math.PI * 2); ctx.moveTo(50.5, 30); ctx.arc(47.5, 30, 3.2, 0, Math.PI * 2);
+	}, '#fbf3e6', CRS, -1.2, -1.8);
+	// 마스크: 코 주변 갈색, 이마로 뾰족하게 올라간다
+	ctx.fillStyle = DK;
+	ctx.beginPath(); ctx.ellipse(32, 28.5, 11.6, 8.4, 0, 0, Math.PI * 2); ctx.fill();
+	ctx.beginPath(); ctx.moveTo(32, 14.4); ctx.quadraticCurveTo(28.6, 20, 22.5, 25.5); ctx.lineTo(41.5, 25.5); ctx.quadraticCurveTo(35.4, 20, 32, 14.4); ctx.fill();
+	ell(ctx, 29.6, 20, 1.9, 4.2, DKH, 0.2); // 이마 윤기
+	// 눈: 큼직한 파란 눈 + 세로 동공 + 반짝임
+	[25.5, 38.5].forEach(x => {
+		const g = ctx.createRadialGradient(x - 1, 24, 0.5, x, 25.3, 4.6); g.addColorStop(0, '#e4f3ff'); g.addColorStop(0.55, '#7fbcff'); g.addColorStop(1, '#3f82d6');
+		ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, 25.3, 4.2, 4.1, 0, 0, Math.PI * 2); ctx.fill();
+		ell(ctx, x + 0.1, 25.6, 1.5, 3.2, '#201634');
+		ell(ctx, x - 1.3, 23.7, 1.3, 1.4, '#ffffff'); ell(ctx, x + 1.4, 27.2, 0.7, 0.7, '#ffffff');
+	});
+	// 볼터치 + 코 + 입 + 수염
+	ell(ctx, 21, 32.4, 2.8, 1.7, 'rgba(255,150,170,0.7)'); ell(ctx, 43, 32.4, 2.8, 1.7, 'rgba(255,150,170,0.7)');
+	ctx.fillStyle = '#e59a9c'; ctx.beginPath(); ctx.moveTo(29.8, 30.2); ctx.lineTo(34.2, 30.2); ctx.lineTo(32, 32.6); ctx.closePath(); ctx.fill();
+	ctx.strokeStyle = '#2a1c24'; ctx.lineWidth = 0.9;
+	if (open) {
+		ell(ctx, 32, 36.6, 3.3, 3.2, '#7d2f52'); ell(ctx, 32, 38, 2.1, 1.5, '#ff8fa5');
+	} else {
+		ctx.beginPath(); ctx.moveTo(32, 32.6); ctx.lineTo(32, 33.8); ctx.stroke();
+		ctx.beginPath(); ctx.arc(30, 33.8, 2, 0.1, Math.PI - 0.3); ctx.stroke();
+		ctx.beginPath(); ctx.arc(34, 33.8, 2, 0.3, Math.PI - 0.1); ctx.stroke();
+	}
+	ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.7;
+	[[-1, 31, 14, 29.6], [-1, 33, 13.5, 33.4], [1, 31, 14, 29.6], [1, 33, 13.5, 33.4]].forEach(([sd, y1, x2, y2]) => {
+		ctx.beginPath(); ctx.moveTo(32 + sd * 11, y1); ctx.lineTo(32 + sd * (32 - x2) + 0, y2); ctx.stroke();
+	});
+	// 왼쪽 귀 옆 빨간 리본
+	ctx.fillStyle = '#ff6b81';
+	ctx.beginPath(); ctx.moveTo(22, 11.5); ctx.lineTo(15.5, 8.6); ctx.lineTo(15.8, 14.6); ctx.closePath(); ctx.fill();
+	ctx.beginPath(); ctx.moveTo(22, 11.5); ctx.lineTo(27.4, 7.6); ctx.lineTo(27.6, 13.6); ctx.closePath(); ctx.fill();
+	ell(ctx, 22, 11.5, 1.8, 1.8, '#ff3d63');
+	// 목 매듭
+	drawKnot(ctx);
+}
+
+// 캐릭터 텍스처: draw 에 그리는 함수(drawDog/drawCat)를 넘긴다
+function makeCharTex(scene, key, S, open, draw) {
 	if (scene.textures.exists(key)) return;
 	const N = 64 * S, c = scene.textures.createCanvas(key, N, N), ctx = c.getContext('2d');
 	ctx.scale(S, S);
-	drawDog(ctx, open);
+	draw(ctx, open);
 	ctx.setTransform(1, 0, 0, 1, 0, 0);
 	crisp(ctx, N, N, { outline: [74, 40, 78], mix: 0.28 });
 	c.refresh();
@@ -217,7 +289,7 @@ function makeEyeFlash(scene) {
 // 구름: 동그란 뭉치를 겹쳐 그리고 아래쪽에 옅은 그림자 (세로로 이어 붙는 스크롤용)
 function makeClouds(scene) {
 	const c = scene.textures.createCanvas('clouds', W, H), ctx = c.getContext('2d');
-	for (let i = 0; i < 9; i++) {
+	for (let i = 0; i < Math.ceil(H / 80) + 1; i++) {
 		const cx = Phaser.Math.Between(80, W - 130), cy = 70 + i * 80 + Phaser.Math.Between(-8, 8), n = Phaser.Math.Between(4, 6);
 		const blobs = [];
 		for (let k = 0; k < n; k++) blobs.push([cx + k * 15 - n * 7, cy - Math.sin(k / (n - 1) * Math.PI) * 9 + Phaser.Math.Between(-2, 2), 11 + Math.sin(k / (n - 1) * Math.PI) * 7]);
@@ -305,4 +377,102 @@ function makeShock(scene) {
 	g.addColorStop(0, 'rgba(255,194,212,0)'); g.addColorStop(0.7, 'rgba(255,194,212,0.35)'); g.addColorStop(0.9, 'rgba(255,107,129,0.85)'); g.addColorStop(1, 'rgba(255,107,129,0)');
 	ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
 	c.refresh();
+}
+
+// ---------- 무기 탄 / 아이템 (2026-11-17) ----------
+// 적 탄: 지름 9px 의 작은 구슬 (예전의 절반 굵기)
+function makeEnemyBullet(scene) {
+	const S = 11, c = scene.textures.createCanvas('ebullet', S, S), ctx = c.getContext('2d');
+	const g = ctx.createRadialGradient(4.2, 4.2, 0.3, 5.5, 5.5, 4.4); g.addColorStop(0, '#ffffff'); g.addColorStop(0.45, '#ffb3c8'); g.addColorStop(1, '#ff6b8f');
+	ctx.fillStyle = g; ctx.beginPath(); ctx.arc(5.5, 5.5, 4, 0, Math.PI * 2); ctx.fill();
+	crisp(ctx, S, S, { outline: [122, 40, 84], mix: 0.25 });
+	c.refresh();
+}
+
+// 내 무기 탄 3종: 노란 총알(국화), 분홍 레이저(벚꽃, 기존 pbullet), 빨간 유도탄(빨간 꽃)
+function makeWeaponShots(scene) {
+	let c = scene.textures.createCanvas('pbul', 9, 13), ctx = c.getContext('2d');
+	let g = ctx.createLinearGradient(0, 0, 0, 13); g.addColorStop(0, '#fff7c2'); g.addColorStop(1, '#ffc42e');
+	ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(4.5, 6.5, 3.1, 5, 0, 0, Math.PI * 2); ctx.fill();
+	ell(ctx, 3.8, 4.5, 0.9, 1.7, '#ffffff');
+	crisp(ctx, 9, 13, { outline: [176, 98, 10], mix: 0.35 });
+	c.refresh();
+	// 유도탄: 위를 향한 작은 로켓 (뾰족한 머리, 날개, 아래 불꽃)
+	c = scene.textures.createCanvas('pmis', 14, 24); ctx = c.getContext('2d');
+	ctx.fillStyle = '#ffd24d'; ctx.beginPath(); ctx.moveTo(7, 20); ctx.lineTo(4.4, 24); ctx.lineTo(7, 22.6); ctx.lineTo(9.6, 24); ctx.closePath(); ctx.fill();
+	ctx.fillStyle = '#ff7a2e'; ctx.beginPath(); ctx.moveTo(7, 19); ctx.lineTo(5.6, 22); ctx.lineTo(8.4, 22); ctx.closePath(); ctx.fill();
+	ctx.fillStyle = '#d9344f'; ctx.beginPath(); ctx.moveTo(4, 17); ctx.lineTo(0.6, 20); ctx.lineTo(4, 14); ctx.closePath(); ctx.fill();
+	ctx.beginPath(); ctx.moveTo(10, 17); ctx.lineTo(13.4, 20); ctx.lineTo(10, 14); ctx.closePath(); ctx.fill();
+	g = ctx.createLinearGradient(3, 0, 11, 0); g.addColorStop(0, '#ff8a9e'); g.addColorStop(0.5, '#ffd3dc'); g.addColorStop(1, '#ee4d6c');
+	ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(7, 0.5); ctx.quadraticCurveTo(11.4, 5, 10.6, 18); ctx.lineTo(3.4, 18); ctx.quadraticCurveTo(2.6, 5, 7, 0.5); ctx.fill();
+	ell(ctx, 7, 11, 1.8, 1.8, '#9fd8ff', 0, '#5a8fbf', 0.5);
+	crisp(ctx, 14, 24, { outline: [120, 24, 56], mix: 0.3 });
+	c.refresh();
+}
+
+// 꽃 3종(국화·벚꽃·빨간꽃) + 우산 + 폭탄 + 하트 아이템 (48x48)
+function makeItems(scene) {
+	const S = 48, mk = (key, fn) => {
+		const c = scene.textures.createCanvas(key, S, S), ctx = c.getContext('2d');
+		fn(ctx);
+		crisp(ctx, S, S, { outline: [100, 44, 84], mix: 0.3 });
+		c.refresh();
+	};
+	const ring = (ctx, n, dist, rx, ry, fill, edge, rot) => {
+		for (let i = 0; i < n; i++) {
+			const a = (rot || -Math.PI / 2) + i * Math.PI * 2 / n;
+			ctx.save(); ctx.translate(24 + Math.cos(a) * dist, 24 + Math.sin(a) * dist); ctx.rotate(a + Math.PI / 2);
+			ell(ctx, 0, 0, rx, ry, fill, 0, edge, 0.8);
+			ctx.restore();
+		}
+	};
+	// 노란 국화: 가는 꽃잎을 3겹으로 촘촘히
+	mk('chrys', ctx => {
+		ring(ctx, 16, 15, 2.5, 8.2, '#ffc928', '#d99a00');
+		ring(ctx, 14, 11.5, 2.5, 7, '#ffdc4d', '#e8ad00', -Math.PI / 2 + 0.2);
+		ring(ctx, 10, 8, 2.4, 5.4, '#fff08a', '#f0c000', -Math.PI / 2 + 0.1);
+		ell(ctx, 24, 24, 4.3, 4.3, '#ffa91f'); ell(ctx, 23, 23, 1.6, 1.6, '#fff3b0');
+	});
+	// 빨간 꽃(양귀비): 넓은 꽃잎 5장 + 검은 속
+	mk('redflower', ctx => {
+		for (let i = 0; i < 5; i++) {
+			const a = -Math.PI / 2 + i * Math.PI * 2 / 5;
+			ctx.save(); ctx.translate(24 + Math.cos(a) * 10, 24 + Math.sin(a) * 10); ctx.rotate(a + Math.PI / 2);
+			const g = ctx.createRadialGradient(0, 3, 1, 0, 0, 12); g.addColorStop(0, '#c71f3c'); g.addColorStop(1, '#ff5c70');
+			ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, 9.4, 11.4, 0, 0, Math.PI * 2); ctx.fill();
+			ctx.strokeStyle = 'rgba(130,10,40,0.45)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(0, 8); ctx.lineTo(0, -4); ctx.stroke();
+			ell(ctx, -3, -5, 2.6, 1.6, 'rgba(255,255,255,0.4)', -0.5);
+			ctx.restore();
+		}
+		ell(ctx, 24, 24, 5.6, 5.6, '#3a1830');
+		for (let i = 0; i < 8; i++) ell(ctx, 24 + Math.cos(i * 0.785) * 7.2, 24 + Math.sin(i * 0.785) * 7.2, 0.9, 0.9, '#2a1020');
+		ell(ctx, 22.8, 22.8, 1.5, 1.5, 'rgba(255,255,255,0.55)');
+	});
+	// 우산: 분홍·하양 줄무늬 둥근 지붕 + 손잡이
+	mk('umbrella', ctx => {
+		const R = 19, cx = 24, cy = 24;
+		ctx.strokeStyle = '#7a4b6b'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+		ctx.beginPath(); ctx.moveTo(cx, cy - 2); ctx.lineTo(cx, 40); ctx.arc(cx - 3.2, 40, 3.2, 0, Math.PI * 0.95); ctx.stroke();
+		ctx.lineCap = 'butt';
+		const segs = 5;
+		for (let i = 0; i < segs; i++) {
+			const x0 = cx - R + (2 * R) * i / segs, x1 = cx - R + (2 * R) * (i + 1) / segs;
+			ctx.beginPath(); ctx.moveTo(cx, cy - 18);
+			ctx.quadraticCurveTo(x0 - 1, cy - 12, x0, cy + 4);
+			ctx.quadraticCurveTo((x0 + x1) / 2, cy - 3, x1, cy + 4);
+			ctx.quadraticCurveTo(x1 + 1, cy - 12, cx, cy - 18);
+			ctx.fillStyle = i % 2 ? '#fff4f6' : '#ff8fb0'; ctx.fill();
+		}
+		ctx.beginPath(); ctx.ellipse(cx, cy - 8, R, 14, 0, Math.PI, Math.PI * 2); ctx.strokeStyle = '#c94a74'; ctx.lineWidth = 1.2; ctx.stroke();
+		ell(ctx, cx, cy - 19, 1.8, 1.8, '#ffd24d');
+		ell(ctx, cx - 8, cy - 10, 4, 2, 'rgba(255,255,255,0.55)', -0.6);
+	});
+	// 하트(체력)
+	mk('heartItem', ctx => {
+		const g = ctx.createRadialGradient(19, 17, 1, 24, 24, 20); g.addColorStop(0, '#ff9fb0'); g.addColorStop(1, '#e8264f');
+		ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(24, 41);
+		ctx.bezierCurveTo(4, 28, 4, 9, 15, 9); ctx.bezierCurveTo(20, 9, 23, 12, 24, 15);
+		ctx.bezierCurveTo(25, 12, 28, 9, 33, 9); ctx.bezierCurveTo(44, 9, 44, 28, 24, 41); ctx.fill();
+		ell(ctx, 14.5, 15.5, 4, 2.4, 'rgba(255,255,255,0.7)', -0.7);
+	});
 }

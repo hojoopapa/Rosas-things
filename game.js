@@ -1,7 +1,8 @@
 // Rosa's Shot - 세로 스크롤 슈팅 (15개 맵)
 // 갤러그식 편대 입장/급강하 + 라이덴식 자동 연사 + 보스 탄막
-// 테스트용 주소 인자: ?stage=N 시작 맵, ?boss=1 보스 바로, ?god=1 무적, ?pad=1~2 조작 방식 강제(1 밀기, 2 조이스틱)
-const W = 480, H = 800;
+// 테스트용 주소 인자: ?stage=N 시작 맵, ?boss=1 보스 바로, ?god=1 무적, ?pad=1~2 조작 방식 강제(1 밀기, 2 조이스틱), ?char=dog|cat 캐릭터, ?w=bullet|laser|missile&lv=1~4 무기
+const W = 480, H = 1040; // 갤럭시 S24 울트라(1440x3120, 19.5:9)에 맞춘 세로로 긴 화면
+const MY = (H - 800) / 2; // 예전 800 높이 기준 화면 가운데 문구의 아래쪽 보정
 const FONT = '"Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Yu Gothic", "Hiragino Sans", "Microsoft YaHei", "PingFang SC", sans-serif';
 const QB = Phaser.Math.Interpolation.QuadraticBezier;
 const PARAMS = new URLSearchParams(location.search);
@@ -21,6 +22,16 @@ function setPad(v) {
 	applyPad();
 	try { localStorage.setItem('rs_ctl', String(v)); } catch (e) { /* 무시 */ }
 }
+// 캐릭터 2종: dog 말티푸, cat 샴고양이 (타이틀에서 선택, 저장됨)
+let CHAR = (() => {
+	if (PARAMS.has('char')) return PARAMS.get('char') === 'cat' ? 'cat' : 'dog';
+	try { if (localStorage.getItem('rs_char') === 'cat') return 'cat'; } catch (e) { /* 무시 */ }
+	return 'dog';
+})();
+function setChar(v) { CHAR = v; try { localStorage.setItem('rs_char', v); } catch (e) { /* 무시 */ } }
+// 무기(떨어지는 꽃): 노란 국화=총알, 분홍 벚꽃=레이저, 빨간 꽃=유도탄. 같은 꽃을 먹으면 레벨업(최대 4), 다른 꽃을 먹으면 종류가 바뀌며 한 단계 내려간다
+const WEAPONS = ['bullet', 'laser', 'missile'];
+const W_MAX = 4;
 const JOY_R = 56, JOY_SPEED = 330; // 조이스틱 반지름, 기체 최고 속도(px/초)
 
 // 난이도: hp=하트 수, bs=적 탄속 배율, fire=적 발사 간격 배율, boss=보스 체력, bomb/shield=시작 개수
@@ -34,7 +45,8 @@ const DIFF = {
 // 맵 배경 색 (3맵마다 바뀜)
 const SKY_TINT = [0xffffff, 0xfff0d0, 0xdcffe8, 0xeadcff, 0xffdce8];
 // 떨어지는 아이템 종류 -> 꽃 그림
-const ITEM_TEX = { heart: 'sakura', star: 'sunflower', bomb: 'rose', shield: 'moonflower' };
+const ITEM_TEX = { bullet: 'chrys', laser: 'sakura', missile: 'redflower', bomb: 'bomb', shield: 'umbrella', heart: 'heartItem' };
+const ITEM_COL = { bullet: 0xffd43b, laser: 0xff9fb5, missile: 0xff4d6a, bomb: 0xb88ad6, shield: 0x9fd8ff, heart: 0xff4d6d };
 
 // ---------- 도트 스프라이트 정의 ----------
 const PAL = {
@@ -125,7 +137,6 @@ const SPR = {
 		'....bcb....',
 		'.....c.....',
 		'.....b.....'] },
-	ebullet: { px: 4, rows: ['.ooo.', 'opppo', 'opwpo', 'opppo', '.ooo.'] },
 	heart: { px: 4, rows: ['.oo.oo.', 'orrorro', 'orrrrro', '.orrro.', '..oro..', '...o...'] },
 	star: { px: 4, rows: ['..o..', '.oyo.', 'oyyyo', '.oyo.', 'o.o.o'] },
 	spark: { px: 3, rows: ['.y.', 'yyy', '.y.'] }
@@ -376,10 +387,11 @@ class Boot extends Phaser.Scene {
 		Object.entries(VARIANTS).forEach(([k, [base, pal]]) =>
 			makeTex(this, k, SPR[base].rows, SPR[base].px, Object.assign({}, PAL, SPR[base].pal, pal)));
 		makeBg(this);
-		makeDogTex(this, 'player', 1, false);      // 말티푸 영웅 (인게임)
-		makeDogTex(this, 'player_o', 1, true);     // 입 벌림 (폭탄 발사)
-		makeDogTex(this, 'player_big', 2, false);  // 타이틀용 2배 해상도
+		[['dog', drawDog], ['cat', drawCat]].forEach(([k, fn]) => {   // 영웅 2종: 인게임 / 입 벌림(폭탄) / 타이틀용 2배 해상도
+			makeCharTex(this, k, 1, false, fn); makeCharTex(this, k + '_o', 1, true, fn); makeCharTex(this, k + '_big', 2, false, fn);
+		});
 		makeCapeShield(this); makeCapeIcon(this); makeEyeFlash(this); makeBomb(this); makeFlowers(this); makeShock(this);
+		makeEnemyBullet(this); makeWeaponShots(this); makeItems(this);
 		['sb0', 'sb1_1', 'mb0', 'mb1', 'ub0'].forEach(k => makeSmall(this, k, k + '_s', 0.6)); // 타이틀 보스 미리보기
 		this.scene.start('Title');
 	}
@@ -392,31 +404,48 @@ class Title extends Phaser.Scene {
 		this.add.image(0, 0, 'sky').setOrigin(0);
 		this.clouds = this.add.tileSprite(0, 0, W, H, 'clouds').setOrigin(0);
 		txt(this, W / 2, 105, "Rosa's", 60, '#ff6b81');
-		txt(this, W / 2, 170, 'Shot', 60, '#7a4b6b');
-		const pl = this.add.image(W / 2, 290, 'player_big');
-		this.tweens.add({ targets: pl, y: 275, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+		txt(this, W / 2, 168, 'Shot', 60, '#7a4b6b');
+		// 영웅 고르기: 말티푸 / 샴고양이
+		txt(this, W / 2, 232, tr('pick'), 18, '#9a7a8f');
+		this.cards = {};
+		['dog', 'cat'].forEach((k, i) => {
+			const x = 140 + i * 200, y = 340;
+			const card = this.add.rectangle(x, y, 176, 190, 0xffffff, 0.6).setStrokeStyle(4, 0xc9a3bd).setInteractive({ useHandCursor: true });
+			const im = this.add.image(x, y - 14, k + '_big');
+			const nm = txt(this, x, y + 74, tr(k), 22);
+			card.on('pointerdown', () => { SFX.click(); setChar(k); this.refreshChar(); });
+			this.tweens.add({ targets: im, y: y - 24, duration: 900 + i * 140, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+			this.cards[k] = { card, im, nm };
+		});
+		this.refreshChar();
+		// 꽃 무기 안내: 노란 국화=총알, 분홍 벚꽃=레이저, 빨간 꽃=유도탄
+		[['chrys', 'wbul'], ['sakura', 'wlas'], ['redflower', 'wmis']].forEach(([k, n], i) => {
+			this.add.image(90 + i * 150, 478, k).setScale(0.62);
+			txt(this, 90 + i * 150, 512, tr(n), 17, '#7a4b6b');
+		});
+		txt(this, W / 2, 544, tr('wnote'), 14, '#9a7a8f');
 		// 만날 보스 미리보기: 곤충(소) - 바다 생물(중) - UFO(최종)
 		['sb0', 'sb1_1', 'mb0', 'mb1', 'ub0'].forEach((k, i) => {
-			const e = this.add.image(60 + i * 90, 385, k + '_s');
-			this.tweens.add({ targets: e, y: 395, duration: 700 + i * 120, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+			const e = this.add.image(60 + i * 90, 600, k + '_s');
+			this.tweens.add({ targets: e, y: 610, duration: 700 + i * 120, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
 		});
-		button(this, W / 2, 470, 260, 60, tr('easy'), 0xbff0d4, () => this.start('easy'));
-		button(this, W / 2, 543, 260, 60, tr('normal'), 0xfff3b0, () => this.start('normal'));
-		button(this, W / 2, 616, 260, 60, tr('hard'), 0xffc2d4, () => this.start('hard'));
+		button(this, W / 2, 690, 260, 60, tr('easy'), 0xbff0d4, () => this.start('easy'));
+		button(this, W / 2, 760, 260, 60, tr('normal'), 0xfff3b0, () => this.start('normal'));
+		button(this, W / 2, 830, 260, 60, tr('hard'), 0xffc2d4, () => this.start('hard'));
 
 		// 조작 방식 선택 (◀ ▶ 로 밀기/조이스틱 중 고르기, 저장됨)
-		txt(this, W / 2, 668, tr('control'), 16, '#9a7a8f');
-		this.padLabel = txt(this, W / 2, 698, '', 24, '#7a4b6b');
-		this.arrow(70, 698, -1);
-		this.arrow(W - 70, 698, 1);
+		txt(this, W / 2, 882, tr('control'), 16, '#9a7a8f');
+		this.padLabel = txt(this, W / 2, 912, '', 24, '#7a4b6b');
+		this.arrow(70, 912, -1);
+		this.arrow(W - 70, 912, 1);
 		this.refreshPad();
 
 		// 언어 선택
-		this.langLabel = txt(this, W / 2, 748, LANG_NAMES[LANG], 24, '#7a4b6b');
-		this.arrow(70, 748, -1, true);
-		this.arrow(W - 70, 748, 1, true);
+		this.langLabel = txt(this, W / 2, 966, LANG_NAMES[LANG], 24, '#7a4b6b');
+		this.arrow(70, 966, -1, true);
+		this.arrow(W - 70, 966, 1, true);
 
-		txt(this, W / 2, 782, tr('best') + ' ' + hiScore(), 16, '#7a4b6b');
+		txt(this, W / 2, 1008, tr('best') + ' ' + hiScore(), 16, '#7a4b6b');
 		soundBtn(this, W - 30, 30);
 
 		// HOREETEC 홈으로 (허브 사이트에 없는 언어는 영어 페이지로). itch.io 같은 iframe 안에서는 숨긴다
@@ -426,6 +455,14 @@ class Title extends Phaser.Scene {
 				location.href = 'https://horeetec.com/' + (LANG === 'ko' ? '' : (['en', 'ja', 'zh', 'es'].includes(LANG) ? LANG : 'en') + '/');
 			});
 		}
+	}
+	refreshChar() {
+		Object.entries(this.cards).forEach(([k, o]) => {
+			const on = k === CHAR;
+			o.card.setStrokeStyle(on ? 7 : 3, on ? 0xff6b81 : 0xc9a3bd).setFillStyle(on ? 0xfff0f6 : 0xffffff, on ? 0.9 : 0.5);
+			o.im.setScale(on ? 1.06 : 0.9).setAlpha(on ? 1 : 0.75);
+			o.nm.setColor(on ? '#ff6b81' : '#7a4b6b');
+		});
 	}
 	start(level) {
 		this.scene.start('Game', { level, stage: Number(PARAMS.get('stage')) || 1 });
@@ -468,7 +505,11 @@ class Game extends Phaser.Scene {
 		this.cl2.tilePositionX = 200;
 
 		const c = this.carry || {};
-		this.score = c.score || 0; this.hp = c.hp || this.df.hp; this.power = c.power || 1; this.invuln = 0;
+		this.score = c.score || 0; this.hp = c.hp || this.df.hp; this.invuln = 0;
+		const pw = PARAMS.get('w');
+		this.wtype = c.wtype || (WEAPONS.includes(pw) ? pw : 'bullet');
+		this.wlevel = c.wlevel || Math.min(W_MAX, Math.max(1, Number(PARAMS.get('lv')) || 1));
+		this.fireTick = 0;
 		this.bombs = c.bombs !== undefined ? c.bombs : this.df.bomb; this.bombCd = 0;
 		this.shields = c.shields !== undefined ? c.shields : this.df.shield; this.shieldUntil = 0; this.shieldTotal = 0;
 		this.over = false; this.boss = null; this.bossCalled = false; this.wavesSpawned = 0;
@@ -482,7 +523,7 @@ class Game extends Phaser.Scene {
 		this.items = this.physics.add.group();
 
 		// 플레이어: 판정은 중앙 작은 원(반지름 5)만
-		this.player = this.physics.add.image(W / 2, PLAYER_Y, 'player').setDepth(5);
+		this.player = this.physics.add.image(W / 2, PLAYER_Y, CHAR).setDepth(5);
 		this.eyeSide = 0; // 한 발씩 번갈아 나가는 눈 (0 왼쪽, 1 오른쪽)
 		this.player.setCircle(5, this.player.width / 2 - 5, this.player.height / 2 - 5);
 
@@ -490,7 +531,8 @@ class Game extends Phaser.Scene {
 		this.hearts = [];
 		for (let i = 0; i < this.df.hp; i++) this.hearts.push(this.add.image(24 + i * 32, 28, 'heart').setDepth(20));
 		this.scoreTxt = txt(this, W - 16, 28, '0', 28).setOrigin(1, 0.5).setDepth(20);
-		this.powTxt = txt(this, 16, 62, '', 18).setOrigin(0, 0.5).setDepth(20);
+		this.wIcon = this.add.image(30, 86, 'chrys').setScale(0.5).setDepth(20);
+		this.powTxt = txt(this, 54, 86, '', 18).setOrigin(0, 0.5).setDepth(20);
 		this.bossBar = this.add.graphics().setDepth(20);
 		this.stageTxt = txt(this, W / 2, 28, this.stage + '/' + MAX_STAGE, 20).setDepth(20);
 		// 폭탄(입에서 뱉는 장미 폭탄) 버튼은 오른쪽 아래, 망토 방패 버튼은 왼쪽 아래 + 소리 버튼
@@ -563,15 +605,16 @@ class Game extends Phaser.Scene {
 	refreshUI() {
 		this.hearts.forEach((h, i) => h.setTexture(i < this.hp ? 'heart' : 'heart_e'));
 		this.scoreTxt.setText(String(this.score));
-		this.powTxt.setText('★ x' + this.power);
+		this.wIcon.setTexture(ITEM_TEX[this.wtype]);
+		this.powTxt.setText('Lv.' + this.wlevel + (this.wlevel >= W_MAX ? ' MAX' : ''));
 		this.bombTxt.setText('x' + this.bombs);
 		this.bombBtn.setAlpha(this.bombs > 0 ? 0.9 : 0.4);
 		this.shieldTxt.setText('x' + this.shields);
 		this.shieldBtn.setAlpha(this.shields > 0 ? 0.9 : 0.4);
 	}
 	banner(s, color) {
-		const t = txt(this, W / 2, 300, s, s.length > 12 ? 34 : 44, color || '#ff6b81').setDepth(30);
-		this.tweens.add({ targets: t, alpha: 0, y: 260, duration: 1600, delay: 500, onComplete: () => t.destroy() });
+		const t = txt(this, W / 2, 300 + MY, s, s.length > 12 ? 34 : 44, color || '#ff6b81').setDepth(30);
+		this.tweens.add({ targets: t, alpha: 0, y: 260 + MY, duration: 1600, delay: 500, onComplete: () => t.destroy() });
 	}
 	burst(x, y, n) {
 		const em = this.add.particles(x, y, 'spark', {
@@ -583,24 +626,56 @@ class Game extends Phaser.Scene {
 	}
 
 	// ----- 플레이어 -----
-	// 눈에서 레이저: 1단계는 왼쪽·오른쪽 눈이 번갈아, 2단계는 두 눈 동시, 3단계는 두 눈 + 이마 정면
+	// 무기별 발사: 총알(노란 국화)은 부채꼴로 많이, 레이저(분홍 벚꽃)는 적을 꿰뚫고, 유도탄(빨간 꽃)은 적을 따라간다
 	fire() {
+		const p = this.player, ey = p.y - 8, L = this.wlevel, T = this.wtype;
+		let shots = [], glint = [];
+		if (T === 'bullet') {
+			const pat = {
+				1: [[-6, 0], [6, 0]], 2: [[-8, -55], [0, 0], [8, 55]],
+				3: [[-9, -110], [-3, -35], [3, 35], [9, 110]], 4: [[-10, -170], [-5, -85], [0, 0], [5, 85], [10, 170]]
+			}[L];
+			shots = pat.map(([dx, vx]) => ({ dx, vx, vy: -700, key: 'pbul', dmg: 1 }));
+			glint = [-7, 7];
+		} else if (T === 'laser') {
+			let xs;
+			if (L === 1) { this.eyeSide ^= 1; xs = [this.eyeSide ? 7 : -7]; } else if (L === 2) xs = [-7, 7]; else xs = [-9, 0, 9];
+			shots = xs.map(dx => ({ dx, vx: 0, vy: -760, key: Math.random() < 0.5 ? 'pbullet' : 'pbullet2', dmg: L >= 4 ? 2 : 1, pierce: true }));
+			glint = xs.filter(x => x !== 0);
+		} else {
+			if (++this.fireTick % 2) return; // 유도탄은 두 번에 한 번 발사
+			const n = L, dmg = [1, 2, 2, 3][L - 1];
+			for (let i = 0; i < n; i++) shots.push({ dx: (i - (n - 1) / 2) * 11, vx: (i - (n - 1) / 2) * 80, vy: -420, key: 'pmis', dmg, homing: true, k: i });
+		}
 		SFX.shoot();
-		const p = this.player, ey = p.y - 8;
-		let shots;
-		if (this.power === 1) { this.eyeSide ^= 1; shots = [[this.eyeSide ? 7 : -7, 0, ey]]; }
-		else if (this.power === 2) shots = [[-7, 0, ey], [7, 0, ey]];
-		else shots = [[-7, -70, ey], [0, 0, ey - 6], [7, 70, ey]];
-		shots.forEach(([dx, vx, y]) => {
-			const b = this.pBul.create(p.x + dx, y, Math.random() < 0.5 ? 'pbullet' : 'pbullet2').setDepth(4);
-			b.body.setSize(7, 12).setOffset(2, 0); // 판정은 레이저 머리 부분만
-			b.body.setVelocity(vx, -620);
-			if (dx !== 0 || this.power < 3) this.eyeGlint(p.x + dx, ey + 1);
+		shots.forEach(sh => {
+			const b = this.pBul.create(p.x + sh.dx, sh.homing ? p.y - 14 : ey, sh.key).setDepth(4);
+			b.dmg = sh.dmg; b.pierce = !!sh.pierce; b.homing = !!sh.homing; b.k = sh.k || 0;
+			if (sh.key === 'pbul') b.body.setSize(7, 11).setOffset(1, 1);
+			else if (sh.homing) { b.body.setSize(8, 14).setOffset(3, 3); b.setRotation(Math.atan2(sh.vy, sh.vx) + Math.PI / 2); }
+			else b.body.setSize(7, 12).setOffset(2, 0); // 레이저 판정은 머리 부분만
+			b.body.setVelocity(sh.vx, sh.vy);
+		});
+		glint.forEach(dx => this.eyeGlint(p.x + dx, ey + 1));
+	}
+	// 유도탄: 가장 가까운 적부터 차례로 하나씩 맡아 따라간다
+	homing(dt) {
+		const p = this.player;
+		const list = this.enemies.getChildren().filter(e => e.active && e.mode !== 'wait' && e.mode !== 'boss_in' && e.y > -10)
+			.sort((a, b) => Phaser.Math.Distance.Between(a.x, a.y, p.x, p.y) - Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y));
+		this.pBul.children.each(b => {
+			if (!b.active || !b.homing) return;
+			if (!b.tgt || !b.tgt.active || b.tgt.mode === 'wait') b.tgt = list.length ? list[b.k % list.length] : null;
+			const v = b.body.velocity, sp = Math.min(580, Math.hypot(v.x, v.y) + 700 * dt);
+			let ang = Math.atan2(v.y, v.x);
+			if (b.tgt) ang += Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(Math.atan2(b.tgt.y - b.y, b.tgt.x - b.x) - ang), -6 * dt, 6 * dt);
+			b.body.setVelocity(Math.cos(ang) * sp, Math.sin(ang) * sp);
+			b.rotation = ang + Math.PI / 2;
 		});
 	}
 	// 눈에서 번쩍 (쏠 때마다 잠깐)
 	eyeGlint(x, y) {
-		const f = this.add.image(x, y, 'eyeflash').setDepth(6).setScale(0.6);
+		const f = this.add.image(x, y, 'eyeflash').setDepth(6).setScale(0.6).setTint({ bullet: 0xffe066, laser: 0xffffff, missile: 0xff8a9a }[this.wtype]);
 		this.tweens.add({ targets: f, scale: 1.1, alpha: 0, duration: 120, onComplete: () => f.destroy() });
 	}
 	hurt() {
@@ -614,7 +689,7 @@ class Game extends Phaser.Scene {
 		if (this.hp <= 0) this.end(false);
 	}
 	collect(it) {
-		if (it.kind === 'star') { this.power = Math.min(3, this.power + 1); this.score += 200; }
+		if (WEAPONS.includes(it.kind)) this.getWeapon(it.kind);
 		else if (it.kind === 'bomb') this.bombs = Math.min(5, this.bombs + 1);
 		else if (it.kind === 'shield') this.shields = Math.min(3, this.shields + 1);
 		else this.hp = Math.min(this.df.hp, this.hp + 1);
@@ -622,6 +697,16 @@ class Game extends Phaser.Scene {
 		this.burst(it.x, it.y, 6);
 		it.destroy();
 		this.refreshUI();
+	}
+	// 같은 꽃은 레벨업, 다른 꽃은 종류가 바뀌며 한 단계 내려간다
+	getWeapon(t) {
+		if (t === this.wtype) this.wlevel = Math.min(W_MAX, this.wlevel + 1);
+		else { this.wtype = t; this.wlevel = Math.max(1, this.wlevel - 1); }
+		this.score += 200;
+		const x = this.add.text(this.player.x, this.player.y - 46, 'Lv.' + this.wlevel + (this.wlevel >= W_MAX ? ' MAX' : ''), {
+			fontFamily: FONT, fontSize: '22px', color: '#' + ITEM_COL[t].toString(16).padStart(6, '0'), fontStyle: 'bold', stroke: '#7a4b6b', strokeThickness: 5
+		}).setOrigin(0.5).setDepth(25);
+		this.tweens.add({ targets: x, y: x.y - 40, alpha: 0, duration: 900, onComplete: () => x.destroy() });
 	}
 
 	// ----- 적 생성 -----
@@ -642,7 +727,7 @@ class Game extends Phaser.Scene {
 	spawnEnemy(kind, slot, from, delay) {
 		const e = this.enemies.create(from.x, from.y, kind).setDepth(3);
 		e.kind = kind; e.hp = kind === 'macaron' ? (this.stage >= 10 ? 3 : 2) : 1;
-		e.slotX = slot.x; e.slotY = slot.y; e.mode = 'wait';
+		e.slotX = slot.x; e.slotY = slot.y + 40; e.mode = 'wait'; slot = { x: slot.x, y: slot.y + 40 }; // 화면이 길어진 만큼 편대를 아래로
 		e.setVisible(false); e.body.enable = false;
 		e.body.setSize(e.width * 0.8, e.height * 0.8, true);
 		const ctrl = { x: W / 2 + (from.x < W / 2 ? -80 : 80), y: -180 };
@@ -662,7 +747,7 @@ class Game extends Phaser.Scene {
 		let shot = false;
 		const chk = this.time.addEvent({ delay: 100, loop: true, callback: () => {
 			if (!e.active) { chk.remove(); return; }
-			if (!shot && e.y > 300) { shot = true; this.aimShot(e, 170); }
+			if (!shot && e.y > 340) { shot = true; this.aimShot(e, 170); }
 		} });
 		this.moveBez(e, p0, p1, p2, 2400, 0, 'Sine.easeIn', () => {
 			chk.remove();
@@ -674,7 +759,7 @@ class Game extends Phaser.Scene {
 	}
 	eBullet(x, y, ang, speed) {
 		const b = this.eBul.create(x, y, 'ebullet').setDepth(6);
-		b.body.setCircle(6, 4, 4);
+		b.body.setCircle(3.5, 2, 2);
 		const s = speed * this.df.bs;
 		b.body.setVelocity(Math.cos(ang) * s, Math.sin(ang) * s);
 		return b;
@@ -688,22 +773,23 @@ class Game extends Phaser.Scene {
 		this.wavesSpawned = n;
 		SFX.wave();
 		const s = this.stage, pat = (s + n) % 4;
+		// 적 수는 예전보다 약 20% 늘렸다 (8→10, 7→8, 5+5→6+6, 7→9, 마지막 줄 5→6)
+		const row = (n, m) => Array.from({ length: n }, (_, i) => m + i * (W - 2 * m) / (n - 1));
 		if (pat === 0) {          // 한 줄(왼쪽에서 입장)
-			for (let i = 0; i < 8; i++) this.spawnEnemy(s > 5 && i % 3 === 1 ? 'macaron' : 'jelly', { x: 60 + i * 51, y: 120 }, { x: -40, y: 350 }, i * 170);
+			row(10, 38).forEach((x, i) => this.spawnEnemy(s > 5 && i % 3 === 1 ? 'macaron' : 'jelly', { x, y: 120 }, { x: -40, y: 350 }, i * 150));
 		} else if (pat === 1) {   // 마카롱 한 줄(오른쪽에서 입장)
-			for (let i = 0; i < 7; i++) this.spawnEnemy('macaron', { x: 80 + i * 55, y: 190 }, { x: W + 40, y: 350 }, i * 190);
+			row(8, 54).forEach((x, i) => this.spawnEnemy('macaron', { x, y: 190 }, { x: W + 40, y: 350 }, i * 180));
 		} else if (pat === 2) {   // 두 줄 섞기
-			for (let i = 0; i < 5; i++) {
-				this.spawnEnemy(i % 2 ? 'jelly2' : 'jelly3', { x: 80 + i * 80, y: 130 }, { x: -40, y: 200 }, i * 200);
-				this.spawnEnemy('macaron', { x: 80 + i * 80, y: 250 }, { x: W + 40, y: 200 }, 100 + i * 200);
-			}
+			row(6, 62).forEach((x, i) => {
+				this.spawnEnemy(i % 2 ? 'jelly2' : 'jelly3', { x, y: 130 }, { x: -40, y: 200 }, i * 180);
+				this.spawnEnemy('macaron', { x, y: 250 }, { x: W + 40, y: 200 }, 100 + i * 180);
+			});
 		} else {                  // V자 편대
-			for (let i = 0; i < 7; i++)
-				this.spawnEnemy(i % 2 ? 'jelly2' : 'macaron', { x: 60 + i * 60, y: 110 + Math.abs(i - 3) * 34 }, { x: i < 4 ? -40 : W + 40, y: 300 }, i * 170);
+			row(9, 36).forEach((x, i) => this.spawnEnemy(i % 2 ? 'jelly2' : 'macaron', { x, y: 110 + Math.abs(i - 4) * 32 }, { x: i < 5 ? -40 : W + 40, y: 300 }, i * 150));
 		}
 		// 뒤쪽 맵일수록 마지막 웨이브에 한 줄 추가
 		if (s >= 8 && n === this.totalWaves)
-			for (let i = 0; i < 5; i++) this.spawnEnemy('jelly3', { x: 80 + i * 80, y: 290 }, { x: i % 2 ? -40 : W + 40, y: 120 }, 400 + i * 160);
+			row(6, 62).forEach((x, i) => this.spawnEnemy('jelly3', { x, y: 290 }, { x: i % 2 ? -40 : W + 40, y: 120 }, 400 + i * 140));
 	}
 	callBoss() {
 		if (this.bossCalled || this.over) return;
@@ -714,7 +800,7 @@ class Game extends Phaser.Scene {
 	// 보스 정의: 등급별 이름표 + 체력 + 몸 크기 + 단계별 공격 목록
 	// 공격: aim(조준 부채꼴) ring(원형) spiral(나선) rain(위에서 비) curtain(구멍 뚫린 탄막 벽)
 	bossDef(q) {
-		const hb = this.df.boss / 60, s = this.stage;
+		const hb = this.df.boss / 60 * 1.5, s = this.stage; // 새 무기가 강해진 만큼 보스 체력 +50%
 		const A = (n, sp, v, e) => ({ p: 'aim', n, sp, v, e }), R = (n, v, e) => ({ p: 'ring', n, v, e });
 		const S = (arms, v, e) => ({ p: 'spiral', arms, v, e }), Rn = (n, v, e) => ({ p: 'rain', n, v, e });
 		const C = (v, e) => ({ p: 'curtain', v, e });
@@ -727,7 +813,7 @@ class Game extends Phaser.Scene {
 				[[R(10, 130, 1800)], [R(12, 140, 1600), A(1, 0, 240, 700)]],
 				[[S(2, 140, 420)], [S(3, 150, 380), A(3, .25, 190, 1700)]]
 			][q.n];
-			return { key, hp: Math.round((12 + s * 2) * hb), scale: 1, sx: 120, y: 150, phases: ph, w: 60, h: 50 };
+			return { key, hp: Math.round((12 + s * 2) * hb), scale: 1, sx: 120, y: 190, phases: ph, w: 60, h: 50 };
 		}
 		if (q.tier === 'mid') {
 			const ph = [
@@ -737,7 +823,7 @@ class Game extends Phaser.Scene {
 				[[Rn(3, 160, 700)], [R(12, 150, 1800)], [S(2, 150, 340), A(3, .3, 210, 1600)]],
 				[[A(3, .3, 170, 1300)], [R(14, 140, 1800)], [S(2, 150, 350), Rn(3, 150, 800)]]
 			][q.n];
-			return { key: 'mb' + q.n, hp: Math.round((36 + s * 3) * hb), scale: 1, sx: 140, y: 165, phases: ph, w: 80, h: 60 };
+			return { key: 'mb' + q.n, hp: Math.round((36 + s * 3) * hb), scale: 1, sx: 140, y: 205, phases: ph, w: 80, h: 60 };
 		}
 		// 최종보스 UFO (15맵은 더 크고 빠름)
 		const hard = q.n === 1, f = hard ? 0.8 : 1;
@@ -747,7 +833,7 @@ class Game extends Phaser.Scene {
 			[S(2, 160, 340 * f), C(130, 3000 * f)],
 			[S(3, 170, 320 * f), A(5, .15, 220, 1500 * f), C(140, 2600 * f)]
 		].map(a => (Array.isArray(a) ? a : [a]));
-		return { key: 'ub' + q.n, hp: Math.round((hard ? 150 : 100) * hb), scale: hard ? 1.2 : 1, sx: 110, y: 175, phases: ph, w: 100, h: 55 };
+		return { key: 'ub' + q.n, hp: Math.round((hard ? 150 : 100) * hb), scale: hard ? 1.2 : 1, sx: 110, y: 215, phases: ph, w: 100, h: 55 };
 	}
 	spawnBoss() {
 		if (this.over) return;
@@ -768,8 +854,9 @@ class Game extends Phaser.Scene {
 	// ----- 피격/처치 -----
 	hitEnemy(b, e) {
 		if (!e.active || e.mode === 'wait' || e.mode === 'boss_in') return;
-		b.destroy();
-		this.damage(e, 1);
+		if (b.pierce) { b.hit = b.hit || new Set(); if (b.hit.has(e)) return; b.hit.add(e); } // 레이저는 꿰뚫고 지나간다(적마다 한 번)
+		else { if (b.homing) this.burst(b.x, b.y, 4); b.destroy(); }
+		this.damage(e, b.dmg || 1);
 	}
 	// 총알과 폭탄이 함께 쓰는 피해 처리
 	damage(e, n) {
@@ -795,11 +882,16 @@ class Game extends Phaser.Scene {
 			else this.time.delayedCall(1500, () => this.stageClear());
 			return;
 		}
+		// 꽃 무기 약 10%(지금 쓰는 꽃이 조금 더 잘 나옴), 우산(방패)·폭탄 각 2%, 하트 1%
 		const r = Math.random();
-		if (r < 0.10) this.drop(e.x, e.y, 'star');
-		else if (r < 0.17 && this.hp < this.df.hp) this.drop(e.x, e.y, 'heart');
-		else if (r < 0.21 && this.shields < 3) this.drop(e.x, e.y, 'shield');
-		else if (r > 0.95 && this.bombs < 5) this.drop(e.x, e.y, 'bomb');
+		if (r < 0.105) {
+			const w = WEAPONS.map(k => (k === this.wtype ? 1.6 : 1)), tot = w.reduce((a, b) => a + b);
+			let q = Math.random() * tot, k = 0;
+			while (k < 2 && q >= w[k]) q -= w[k++];
+			this.drop(e.x, e.y, WEAPONS[k]);
+		} else if (r < 0.125) { if (this.shields < 3) this.drop(e.x, e.y, 'shield'); }
+		else if (r < 0.145) { if (this.bombs < 5) this.drop(e.x, e.y, 'bomb'); }
+		else if (r < 0.155 && this.hp < this.df.hp) this.drop(e.x, e.y, 'heart');
 		e.destroy();
 		this.refreshUI();
 	}
@@ -808,7 +900,7 @@ class Game extends Phaser.Scene {
 		it.kind = kind;
 		it.body.setVelocity(0, 110);
 		// 적과 구분되도록: 종류별 색 후광(두근두근 커졌다 작아짐) + 좌우 살랑살랑
-		const col = { heart: 0xff9fb5, star: 0xffe066, bomb: 0xff6b81, shield: 0x9fd8ff }[kind];
+		const col = ITEM_COL[kind];
 		const halo = this.add.circle(x, y, 32, 0xffffff, 0.55).setStrokeStyle(4, col).setDepth(4);
 		this.tweens.add({ targets: halo, scale: 1.3, alpha: 0.25, duration: 450, yoyo: true, repeat: -1 });
 		this.tweens.add({ targets: it, angle: { from: -12, to: 12 }, duration: 500, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
@@ -827,8 +919,8 @@ class Game extends Phaser.Scene {
 		this.invuln = Math.max(this.invuln, this.time.now + 1500);
 		SFX.bomb();
 		const p = this.player, tx = p.x, ty = Math.max(160, p.y - 300);
-		p.setTexture('player_o');
-		this.time.delayedCall(350, () => { if (p.active) p.setTexture('player'); });
+		p.setTexture(CHAR + '_o');
+		this.time.delayedCall(350, () => { if (p.active) p.setTexture(CHAR); });
 		const b = this.add.image(p.x, p.y + 6, 'bomb').setDepth(7).setScale(0.4);
 		this.tweens.add({ targets: b, scale: 1.2, angle: 540, duration: 520, ease: 'Sine.easeOut' });
 		this.tweens.add({
@@ -908,12 +1000,12 @@ class Game extends Phaser.Scene {
 		hiScore(this.score);
 		this.eBul.clear(true, true);
 		this.add.rectangle(0, 0, W, H, 0xffffff, 0.45).setOrigin(0).setDepth(40);
-		txt(this, W / 2, 330, tr('stageClear'), 40, '#ff6b81').setDepth(41);
-		txt(this, W / 2, 400, tr('score') + ' ' + this.score, 28).setDepth(41);
-		this.burst(W / 2, 300, 40);
+		txt(this, W / 2, 330 + MY, tr('stageClear'), 40, '#ff6b81').setDepth(41);
+		txt(this, W / 2, 400 + MY, tr('score') + ' ' + this.score, 28).setDepth(41);
+		this.burst(W / 2, 300 + MY, 40);
 		// 보상: 체력 +1, 3맵마다 폭탄·방패 +1
 		const nx = {
-			score: this.score, power: this.power,
+			score: this.score, wtype: this.wtype, wlevel: this.wlevel,
 			hp: Math.min(this.df.hp, this.hp + 1),
 			bombs: Math.min(5, this.bombs + (this.stage % 3 === 0 ? 1 : 0)),
 			shields: Math.min(3, this.shields + (this.stage % 3 === 0 ? 1 : 0))
@@ -928,12 +1020,12 @@ class Game extends Phaser.Scene {
 		this.shieldImg.setVisible(false);
 		hiScore(this.score);
 		this.add.rectangle(0, 0, W, H, 0xffffff, 0.55).setOrigin(0).setDepth(40);
-		txt(this, W / 2, 250, win ? tr('allClear') : tr('gameOver'), win ? 44 : 48, win ? '#ff6b81' : '#7a4b6b').setDepth(41);
-		txt(this, W / 2, 330, tr('score') + ' ' + this.score, 32).setDepth(41);
-		txt(this, W / 2, 375, tr('best') + ' ' + hiScore(), 22).setDepth(41);
-		button(this, W / 2, 470, 260, 64, tr('retry'), 0xfff3b0, () => this.scene.restart({ level: this.level, stage: 1 })).forEach(o => o.setDepth(41));
-		button(this, W / 2, 550, 260, 64, tr('home'), 0xbff0d4, () => this.scene.start('Title')).forEach(o => o.setDepth(41));
-		if (win) this.burst(W / 2, 200, 60);
+		txt(this, W / 2, 250 + MY, win ? tr('allClear') : tr('gameOver'), win ? 44 : 48, win ? '#ff6b81' : '#7a4b6b').setDepth(41);
+		txt(this, W / 2, 330 + MY, tr('score') + ' ' + this.score, 32).setDepth(41);
+		txt(this, W / 2, 375 + MY, tr('best') + ' ' + hiScore(), 22).setDepth(41);
+		button(this, W / 2, 470 + MY, 260, 64, tr('retry'), 0xfff3b0, () => this.scene.restart({ level: this.level, stage: 1 })).forEach(o => o.setDepth(41));
+		button(this, W / 2, 550 + MY, 260, 64, tr('home'), 0xbff0d4, () => this.scene.start('Title')).forEach(o => o.setDepth(41));
+		if (win) this.burst(W / 2, 200 + MY, 60);
 	}
 
 	// ----- 하단 터치 패드: 1 밀기(좌우), 2 조이스틱(전후좌우) -----
@@ -1024,6 +1116,7 @@ class Game extends Phaser.Scene {
 			p.y = Phaser.Math.Clamp(p.y, 120, H - 50);
 		}
 		this.padUpdate();
+		this.homing(dt);
 		p.x = Phaser.Math.Clamp(p.x, 24, W - 24);
 		p.setAlpha(time < this.invuln && Math.floor(time / 80) % 2 ? 0.3 : 1);
 
