@@ -120,13 +120,30 @@ function drawDog(ctx, open) {
 		ctx.beginPath(); ctx.arc(34.1, 34.3, 2.1, 0, Math.PI); ctx.stroke();
 		ell(ctx, 32, 37.2, 1.7, 1.6, '#ff8fa5');
 	}
-	// 7. 목 매듭(금 단추)과 끈
+	// 7. 목 매듭(금 단추)과 끈, 장난감 총
 	drawKnot(ctx);
+	drawGun(ctx, FUR);
 }
 function drawKnot(ctx) {
 	ctx.strokeStyle = '#d6385f'; ctx.lineWidth = 1.6;
 	ctx.beginPath(); ctx.moveTo(23, 38.5); ctx.quadraticCurveTo(28, 43, 32, 41.5); ctx.quadraticCurveTo(36, 43, 41, 38.5); ctx.stroke();
 	ell(ctx, 32, 41.5, 2.9, 2.9, '#ffd24d', 0, '#c98a12', 0.8); ell(ctx, 31.2, 40.6, 0.9, 0.9, '#fff6c8');
+}
+
+// 귀여운 장난감 총: 오른쪽 앞발로 들고 위로 쏜다 (총구는 캔버스 (44, 37) 근처)
+function drawGun(ctx, paw) {
+	// 손잡이(오른쪽 아래로 기울어짐) -> 몸통 -> 총구 링 + 구멍 -> 방아쇠 -> 하트 장식 -> 앞발
+	ctx.save(); ctx.translate(45, 52); ctx.rotate(0.35);
+	ctx.fillStyle = '#ff7aa2'; ctx.beginPath(); ctx.roundRect(-2.6, -1, 5.2, 8.4, 1.6); ctx.fill();
+	ctx.restore();
+	const body = ctx.createLinearGradient(40, 0, 49, 0); body.addColorStop(0, '#bfe9ff'); body.addColorStop(0.55, '#7fcdf6'); body.addColorStop(1, '#4fa6e0');
+	ctx.fillStyle = body; ctx.beginPath(); ctx.roundRect(40.2, 40.5, 7.8, 13, 2.2); ctx.fill();
+	ctx.fillStyle = '#ffd24d'; ctx.beginPath(); ctx.roundRect(39.6, 37.2, 9, 4.2, 1.6); ctx.fill();
+	ell(ctx, 44.1, 37.9, 2.7, 1.1, '#6a2d4a');
+	ctx.fillStyle = '#ff7aa2'; ctx.fillRect(40.2, 45.6, 7.8, 1.4);
+	ctx.strokeStyle = '#c94a74'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.arc(42.2, 55.4, 2.1, 0.3, Math.PI * 1.1); ctx.stroke();
+	ctx.fillStyle = '#fff6c8'; ctx.beginPath(); ctx.arc(43.2, 42.8, 1, 0, Math.PI * 2); ctx.arc(45, 42.8, 1, 0, Math.PI * 2); ctx.moveTo(42.3, 43.2); ctx.lineTo(44.1, 45.4); ctx.lineTo(45.9, 43.2); ctx.fill();
+	ell(ctx, 45.4, 54.4, 3, 2.6, paw);
 }
 
 // 샴고양이 영웅: 크림색 몸, 진한 갈색 마스크·귀·꼬리·발, 파란 눈
@@ -188,8 +205,9 @@ function drawCat(ctx, open) {
 	ctx.beginPath(); ctx.moveTo(22, 11.5); ctx.lineTo(15.5, 8.6); ctx.lineTo(15.8, 14.6); ctx.closePath(); ctx.fill();
 	ctx.beginPath(); ctx.moveTo(22, 11.5); ctx.lineTo(27.4, 7.6); ctx.lineTo(27.6, 13.6); ctx.closePath(); ctx.fill();
 	ell(ctx, 22, 11.5, 1.8, 1.8, '#ff3d63');
-	// 목 매듭
+	// 목 매듭, 장난감 총
 	drawKnot(ctx);
+	drawGun(ctx, CR);
 }
 
 // 캐릭터 텍스처: draw 에 그리는 함수(drawDog/drawCat)를 넘긴다

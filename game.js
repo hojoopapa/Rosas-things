@@ -628,7 +628,7 @@ class Game extends Phaser.Scene {
 	// ----- 플레이어 -----
 	// 무기별 발사: 총알(노란 국화)은 부채꼴로 많이, 레이저(분홍 벚꽃)는 적을 꿰뚫고, 유도탄(빨간 꽃)은 적을 따라간다
 	fire() {
-		const p = this.player, ey = p.y - 8, L = this.wlevel, T = this.wtype;
+		const p = this.player, ey = p.y + 2, L = this.wlevel, T = this.wtype; // 총구: 캐릭터 오른쪽 앞(+12)
 		let shots = [], glint = [];
 		if (T === 'bullet') {
 			const pat = {
@@ -644,19 +644,19 @@ class Game extends Phaser.Scene {
 			glint = xs.filter(x => x !== 0);
 		} else {
 			if (++this.fireTick % 2) return; // 유도탄은 두 번에 한 번 발사
-			const n = L, dmg = [1, 2, 2, 3][L - 1];
+			const n = L, dmg = [0.7, 1.4, 1.4, 2.1][L - 1]; // 유도탄 피해 30% 너프
 			for (let i = 0; i < n; i++) shots.push({ dx: (i - (n - 1) / 2) * 11, vx: (i - (n - 1) / 2) * 80, vy: -420, key: 'pmis', dmg, homing: true, k: i });
 		}
 		SFX.shoot();
 		shots.forEach(sh => {
-			const b = this.pBul.create(p.x + sh.dx, sh.homing ? p.y - 14 : ey, sh.key).setDepth(4);
+			const b = this.pBul.create(p.x + 12 + sh.dx * 0.55, sh.homing ? p.y - 2 : ey, sh.key).setDepth(4);
 			b.dmg = sh.dmg; b.pierce = !!sh.pierce; b.homing = !!sh.homing; b.k = sh.k || 0;
 			if (sh.key === 'pbul') b.body.setSize(7, 11).setOffset(1, 1);
 			else if (sh.homing) { b.body.setSize(8, 14).setOffset(3, 3); b.setRotation(Math.atan2(sh.vy, sh.vx) + Math.PI / 2); }
 			else b.body.setSize(7, 12).setOffset(2, 0); // 레이저 판정은 머리 부분만
 			b.body.setVelocity(sh.vx, sh.vy);
 		});
-		glint.forEach(dx => this.eyeGlint(p.x + dx, ey + 1));
+		this.eyeGlint(p.x + 12, ey - 2); // 총구 번쩍
 	}
 	// 유도탄: 가장 가까운 적부터 차례로 하나씩 맡아 따라간다
 	homing(dt) {
@@ -800,7 +800,7 @@ class Game extends Phaser.Scene {
 	// 보스 정의: 등급별 이름표 + 체력 + 몸 크기 + 단계별 공격 목록
 	// 공격: aim(조준 부채꼴) ring(원형) spiral(나선) rain(위에서 비) curtain(구멍 뚫린 탄막 벽)
 	bossDef(q) {
-		const hb = this.df.boss / 60 * 1.5, s = this.stage; // 새 무기가 강해진 만큼 보스 체력 +50%
+		const hb = this.df.boss / 60 * 1.95, s = this.stage; // 새 무기가 강해진 만큼 보스 체력 +95% (2차 +30% 포함)
 		const A = (n, sp, v, e) => ({ p: 'aim', n, sp, v, e }), R = (n, v, e) => ({ p: 'ring', n, v, e });
 		const S = (arms, v, e) => ({ p: 'spiral', arms, v, e }), Rn = (n, v, e) => ({ p: 'rain', n, v, e });
 		const C = (v, e) => ({ p: 'curtain', v, e });
